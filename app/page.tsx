@@ -1,7 +1,19 @@
 'use client';
 
-import React, { useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
+import React, { useMemo, useState } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  CartesianGrid,
+  ReferenceDot,
+  Brush,
+  TooltipProps,
+} from 'recharts';
 import { runBacktest } from '../lib/backtest';
 
 async function fetchYahooDailyViaApi(ticker: string, start: string, end: string) {
@@ -43,6 +55,56 @@ export default function Page() {
   }
 
   const chartData = result?.curve || [];
+  const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+
+  const formatCurrency = (value: number, fractionDigits = 2) =>
+    value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits });
+  const formatPnL = (value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`;
+
+  const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const settlement = (payload[0].payload as any)?.settlement;
+    return (
+      <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
+        <div className="mb-2 text-sm font-semibold">{label}</div>
+        <div className="space-y-1">
+          {payload.map(item => (
+            <div key={item.dataKey} className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: item.color || '#000' }} />
+                {item.name}
+              </span>
+              <span>
+                {(() => {
+                  const rawValue = item.value;
+                  if (typeof rawValue === 'number') {
+                    return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                  }
+                  if (Array.isArray(rawValue)) {
+                    return rawValue
+                      .map(v => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v))
+                      .join(', ');
+                  }
+                  return rawValue ?? '';
+                })()}
+              </span>
+            </div>
+          ))}
+        </div>
+        {settlement && settlement.qty > 0 && (
+          <div className="mt-3 border-t pt-2">
+            <div className="font-semibold">Covered Call 結算</div>
+            <div className="mt-1 space-y-1">
+              <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
+              <div>履約價：{settlement.strike.toFixed(2)}</div>
+              <div>標的價格：{settlement.underlying.toFixed(2)}</div>
+              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <main className="p-6 md:p-10">
@@ -113,10 +175,40 @@ export default function Page() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip formatter={(v: any) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)} />
+                    <Tooltip content={<CustomTooltip />} />
                     <Legend />
-                    <Line type="monotone" dataKey="BuyAndHold" dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="CoveredCall" dot={false} strokeWidth={2} />
+                    <Brush dataKey="date" height={24} travellerWidth={12} stroke="#94a3b8" />
+                    <Line
+                      type="monotone"
+                      dataKey="BuyAndHold"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#2563eb"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="CoveredCall"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#f97316"
+                    />
+                    {settlementPoints.map((point: any, idx: number) => (
+                      <ReferenceDot
+                        key={`${point.date}-${idx}`}
+                        x={point.date}
+                        y={point.totalValue}
+                        r={6}
+                        fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
+                        stroke="white"
+                        strokeWidth={1.5}
+                        label={{
+                          value: formatPnL(point.pnl),
+                          position: 'top',
+                          fill: point.pnl >= 0 ? '#16a34a' : '#dc2626',
+                          fontSize: 11,
+                        }}
+                      />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -124,7 +216,7 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">估計歷史波動（HV，年化）</div>
                   <div className="text-lg font-semibold">{(result.hv * 100).toFixed(1)}%</div>
@@ -140,6 +232,14 @@ export default function Page() {
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">Covered Call 總報酬</div>
                   <div className="text-lg font-semibold">{(result.ccReturn * 100).toFixed(1)}%</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Buy&Hold 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.bhShares.toLocaleString()}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Covered Call 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.ccShares.toLocaleString()}</div>
                 </div>
               </div>
             </section>
