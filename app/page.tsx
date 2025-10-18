@@ -669,6 +669,7 @@ export default function Page() {
                       dot={false}
                       strokeWidth={2}
                       stroke="#2563eb"
+                      yAxisId="value"
                     />
                     <Brush
                       dataKey="CoveredCall"
@@ -717,6 +718,7 @@ export default function Page() {
                         key={`${point.date}-${idx}`}
                         x={point.date}
                         y={point.totalValue}
+                        yAxisId="value"
                         r={6}
                         fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
                         stroke="white"
