@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -8,9 +8,9 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   CartesianGrid,
   ReferenceDot,
+  ReferenceLine,
   Brush,
   TooltipProps,
 } from 'recharts';
@@ -28,6 +28,76 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   };
 }
 
+type RollLabelViewBox = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+};
+
+const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: number }) => {
+  if (!viewBox && typeof x !== 'number') return null;
+  const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
+  const chartTop = viewBox?.y ?? 0;
+  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox.x ?? 0 : 0;
+  const chartRight = viewBox && viewBox.width && viewBox.width > 0 ? chartLeft + viewBox.width : null;
+  const labelWidth = 92;
+  const labelHeight = 22;
+  const offsetY = 10;
+
+  let rectX = baseX - labelWidth / 2;
+  if (chartRight != null) {
+    rectX = Math.min(rectX, chartRight - labelWidth - 4);
+  }
+  rectX = Math.max(chartLeft + 4, rectX);
+  const rectY = chartTop + offsetY;
+  const textX = rectX + labelWidth / 2;
+  const textY = rectY + labelHeight / 2 + 4;
+
+  return (
+    <g>
+      <rect
+        x={rectX}
+        y={rectY}
+        width={labelWidth}
+        height={labelHeight}
+        rx={labelHeight / 2}
+        fill="#ede9fe"
+        stroke="#5b21b6"
+        strokeWidth={1}
+      />
+      <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
+        Roll up &amp; out
+      </text>
+    </g>
+  );
+};
+
+type SeriesConfig = {
+  key: 'buyAndHold' | 'coveredCall' | 'underlying' | 'callStrike';
+  label: string;
+  color: string;
+  dataKey: 'BuyAndHold' | 'CoveredCall' | 'UnderlyingPrice' | 'CallStrike';
+  axis: 'value' | 'price';
+  strokeDasharray?: string;
+};
+
+const SERIES_CONFIG: readonly SeriesConfig[] = [
+  { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
+  { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
+  { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
+  {
+    key: 'callStrike',
+    label: '賣出履約價',
+    color: '#16a34a',
+    dataKey: 'CallStrike',
+    axis: 'price',
+    strokeDasharray: '6 3',
+  },
+];
+
+type SeriesKey = SeriesConfig['key'];
+
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
   const [start, setStart] = useState('2018-01-01');
@@ -35,7 +105,6 @@ export default function Page() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [shares, setShares] = useState(100);
   const [targetDelta, setTargetDelta] = useState(0.3);
-  const [callDeltaOverride, setCallDeltaOverride] = useState<number | null>(null);
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
@@ -43,10 +112,18 @@ export default function Page() {
   const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
   const [dynamicContracts, setDynamicContracts] = useState(true);
   const [enableRoll, setEnableRoll] = useState(true);
+  const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.7);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>({
+    buyAndHold: true,
+    coveredCall: true,
+    underlying: true,
+    callStrike: true,
+  });
 
   const r = 0.03;
   const q = 0.00;
@@ -69,6 +146,7 @@ export default function Page() {
         skipEarningsWeek,
         dynamicContracts,
         enableRoll,
+        rollDeltaThreshold,
         earningsDates: payload.earningsDates,
       });
       setResult(res);
@@ -91,26 +169,116 @@ export default function Page() {
     start,
     targetDelta,
     ticker,
+    rollDeltaThreshold,
   ]);
+
+  const toggleSeries = useCallback((key: SeriesKey) => {
+    setSeriesVisibility(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const chartData = useMemo(() => result?.curve ?? [], [result]);
   const chartLength = chartData.length;
-  const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+  const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
+  const rollPoints = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'roll'),
+    [settlementPoints],
+  );
+  const expirationSettlements = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'expiry' && point.qty > 0),
+    [settlementPoints],
+  );
 
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
 
+  useEffect(() => {
+    if (!result) {
+      setIsFullscreen(false);
+    }
+  }, [result]);
+
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    let isPointerInside = false;
+
+    const preventWheelScroll = (event: WheelEvent) => {
+      if (!isPointerInside) return;
+      if (event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+    };
+
+    const handlePointerEnter = () => {
+      isPointerInside = true;
+      window.addEventListener('wheel', preventWheelScroll, { passive: false });
+    };
+
+    const handlePointerLeave = () => {
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+    };
+
+    container.addEventListener('pointerenter', handlePointerEnter);
+    container.addEventListener('pointerleave', handlePointerLeave);
+
+    return () => {
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+      container.removeEventListener('pointerenter', handlePointerEnter);
+      container.removeEventListener('pointerleave', handlePointerLeave);
+    };
+  }, [result, isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isFullscreen]);
+
   const visibleData = useMemo(() => {
     if (chartLength === 0) return [];
     if (!brushRange) return chartData;
-    const startIdx = Math.max(0, Math.min(chartLength - 1, brushRange.startIndex));
-    const endIdx = Math.max(0, Math.min(chartLength - 1, brushRange.endIndex));
-    const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-    return chartData.slice(lo, hi + 1);
+    const normalizedStart = Math.max(0, Math.min(chartLength - 1, Math.min(brushRange.startIndex, brushRange.endIndex)));
+    const normalizedEnd = Math.max(
+      normalizedStart,
+      Math.max(0, Math.min(chartLength - 1, Math.max(brushRange.startIndex, brushRange.endIndex))),
+    );
+    return chartData.slice(normalizedStart, normalizedEnd + 1);
   }, [brushRange, chartData, chartLength]);
+
+  const activeBrushRange = useMemo(() => {
+    if (chartLength === 0) {
+      return { startIndex: 0, endIndex: 0 };
+    }
+    if (!brushRange) {
+      return { startIndex: 0, endIndex: chartLength - 1 };
+    }
+    const startIdx = Math.max(0, Math.min(chartLength - 1, Math.min(brushRange.startIndex, brushRange.endIndex)));
+    const endIdx = Math.max(startIdx, Math.min(chartLength - 1, Math.max(brushRange.startIndex, brushRange.endIndex)));
+    return { startIndex: startIdx, endIndex: endIdx };
+  }, [brushRange, chartLength]);
 
   const visibleRangeLabel = useMemo(() => {
     if (!visibleData.length) return '';
@@ -119,11 +287,17 @@ export default function Page() {
     return first === last ? first : `${first} ~ ${last}`;
   }, [visibleData]);
 
-  const visibleSettlements = useMemo(() => {
+  const visibleExpirations = useMemo(() => {
     if (!visibleData.length) return [] as any[];
     const dateSet = new Set(visibleData.map((point: any) => point.date));
-    return settlementPoints.filter((point: any) => dateSet.has(point.date));
-  }, [settlementPoints, visibleData]);
+    return expirationSettlements.filter((point: any) => dateSet.has(point.date));
+  }, [expirationSettlements, visibleData]);
+
+  const visibleRolls = useMemo(() => {
+    if (!visibleData.length) return [] as any[];
+    const dateSet = new Set(visibleData.map((point: any) => point.date));
+    return rollPoints.filter((point: any) => dateSet.has(point.date));
+  }, [rollPoints, visibleData]);
 
   const renderedData = useMemo(() => {
     const points: any[] = Array.isArray(visibleData) ? visibleData : [];
@@ -152,7 +326,10 @@ export default function Page() {
       sampled.push(lastPoint);
     }
 
-    const settlementDates = new Set(visibleSettlements.map((point: any) => point.date));
+    const settlementDates = new Set([
+      ...visibleExpirations.map((point: any) => point.date),
+      ...visibleRolls.map((point: any) => point.date),
+    ]);
     if (settlementDates.size > 0) {
       points.forEach(point => {
         if (settlementDates.has(point.date) && !sampled.some(item => item.date === point.date)) {
@@ -167,7 +344,7 @@ export default function Page() {
     });
 
     return sampled;
-  }, [pointDensity, visibleData, visibleSettlements]);
+  }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
   const formatCurrency = useCallback(
     (value: number, fractionDigits = 2) =>
@@ -175,10 +352,21 @@ export default function Page() {
     [],
   );
   const formatPnL = useCallback((value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`, [formatCurrency]);
+  const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), [formatCurrency]);
+  const formatPriceTick = useCallback(
+    (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    [],
+  );
 
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
     const settlement = (payload[0].payload as any)?.settlement;
+    const callDelta = (payload[0].payload as any)?.CallDelta;
+    const settlementTitle = settlement
+      ? settlement.type === 'roll'
+        ? 'Roll up & out'
+        : 'Covered Call 結算'
+      : null;
     return (
       <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
         <div className="mb-2 text-sm font-semibold">{label}</div>
@@ -193,7 +381,10 @@ export default function Page() {
                 {(() => {
                   const rawValue = item.value;
                   if (typeof rawValue === 'number') {
-                    return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    if (item.dataKey === 'UnderlyingPrice' || item.dataKey === 'CallStrike') {
+                      return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    }
+                    return formatCurrency(rawValue, 0);
                   }
                   if (Array.isArray(rawValue)) {
                     return rawValue
@@ -206,15 +397,28 @@ export default function Page() {
             </div>
           ))}
         </div>
-        {settlement && settlement.qty > 0 && (
+        {settlement && settlementTitle && (
           <div className="mt-3 border-t pt-2">
-            <div className="font-semibold">Covered Call 結算</div>
+            <div className="font-semibold">{settlementTitle}</div>
             <div className="mt-1 space-y-1">
               <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
               <div>履約價：{settlement.strike.toFixed(2)}</div>
               <div>標的價格：{settlement.underlying.toFixed(2)}</div>
-              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              {typeof settlement.qty === 'number' && settlement.qty > 0 && (
+                <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              )}
+              {typeof settlement.delta === 'number' && (
+                <div>Delta：Δ {settlement.delta.toFixed(2)}</div>
+              )}
+              {settlement.type === 'roll' && (
+                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+              )}
             </div>
+          </div>
+        )}
+        {typeof callDelta === 'number' && (
+          <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+            當前 Delta：Δ {callDelta.toFixed(2)}
           </div>
         )}
       </div>
@@ -227,11 +431,12 @@ export default function Page() {
       if (chartLength === 0) return;
       const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
       const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
-      if (startIdx === 0 && endIdx === chartLength - 1) {
+      const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+      if (lo === 0 && hi === chartLength - 1) {
         setBrushRange(null);
         return;
       }
-      setBrushRange({ startIndex: startIdx, endIndex: endIdx });
+      setBrushRange({ startIndex: lo, endIndex: hi });
     },
     [chartLength],
   );
@@ -239,9 +444,10 @@ export default function Page() {
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (chartLength === 0) return;
+      if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
-      const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
+      const baseRange = brushRange ? activeBrushRange : { startIndex: 0, endIndex: chartLength - 1 };
       let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
       let endIdx = Math.max(baseRange.startIndex, baseRange.endIndex);
 
@@ -260,18 +466,8 @@ export default function Page() {
 
       const center = (startIdx + endIdx) / 2;
       let newStart = Math.round(center - newSize / 2);
-      let newEnd = newStart + newSize - 1;
-
-      if (newStart < 0) {
-        newEnd += -newStart;
-        newStart = 0;
-      }
-
-      if (newEnd > chartLength - 1) {
-        const overshoot = newEnd - (chartLength - 1);
-        newStart = Math.max(0, newStart - overshoot);
-        newEnd = chartLength - 1;
-      }
+      newStart = Math.max(0, Math.min(chartLength - newSize, newStart));
+      const newEnd = newStart + newSize - 1;
 
       if (newStart <= 0 && newEnd >= chartLength - 1) {
         setBrushRange(null);
@@ -279,8 +475,15 @@ export default function Page() {
         setBrushRange({ startIndex: newStart, endIndex: newEnd });
       }
     },
-    [brushRange, chartLength],
+    [activeBrushRange, brushRange, chartLength],
   );
+
+  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
 
   const summaryCards = useMemo(() => {
     if (!result) return [] as {
@@ -300,6 +503,14 @@ export default function Page() {
       {
         label: 'Call Delta 目標',
         value: result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --',
+      },
+      {
+        label: 'Roll Delta 門檻',
+        value: enableRoll
+          ? result.rollDeltaTrigger != null
+            ? `Δ ${result.rollDeltaTrigger.toFixed(2)}`
+            : `Δ ${rollDeltaThreshold.toFixed(2)}`
+          : '未啟用',
       },
       {
         label: 'Buy&Hold 總報酬',
@@ -323,11 +534,11 @@ export default function Page() {
         footnote: `${result.ccSettlementCount ?? 0} 次結算`,
       },
     ];
-  }, [result]);
+  }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
     <main className="p-6 md:p-10">
-      <div className="max-w-6xl mx-auto grid gap-6">
+      <div className="mx-auto grid max-w-7xl gap-6 lg:gap-8">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl md:text-3xl font-bold">Covered Call 策略回測器（Next.js 版）</h1>
           <div className="text-sm opacity-70">資料來源：Yahoo Finance（經由伺服器端代理）</div>
@@ -361,28 +572,6 @@ export default function Page() {
               <input type="range" min={0.1} max={0.6} step={0.01} value={targetDelta} onChange={e => setTargetDelta(Number(e.target.value))} />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">Call Delta 覆寫（選填）</div>
-              <input
-                type="number"
-                min={0.05}
-                max={0.95}
-                step={0.01}
-                className="w-full rounded-xl border p-2"
-                placeholder="例如 0.25"
-                value={callDeltaOverride ?? ''}
-                onChange={e => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    setCallDeltaOverride(null);
-                    return;
-                  }
-                  const parsed = Number(raw);
-                  setCallDeltaOverride(Number.isFinite(parsed) ? parsed : null);
-                }}
-              />
-              <div className="text-xs text-slate-500">留空則沿用上方 Delta 目標，數值越低代表賣更 OTM 的 Call。</div>
-            </label>
-            <label className="space-y-2">
               <div className="text-sm">到期頻率</div>
               <select className="w-full rounded-xl border p-2" value={freq} onChange={e => setFreq(e.target.value as any)}>
                 <option value="weekly">週選擇權</option>
@@ -412,9 +601,43 @@ export default function Page() {
               </label>
               <label className="flex items-center gap-3">
                 <input type="checkbox" checked={enableRoll} onChange={e => setEnableRoll(e.target.checked)} />
-                <span>S ≥ 0.99×K 且距到期 &gt;2 天時 Roll up &amp; out</span>
+                <span>Delta 達閾值且距到期 &gt; 2 天時 Roll up &amp; out</span>
               </label>
             </div>
+            {enableRoll && (
+              <div className="md:col-span-3 flex flex-col gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4 text-xs md:text-sm">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <span className="font-semibold text-indigo-900">Roll Delta 門檻：Δ {rollDeltaThreshold.toFixed(2)}</span>
+                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
+                    <input
+                      type="range"
+                      min={0.3}
+                      max={0.95}
+                      step={0.01}
+                      value={rollDeltaThreshold}
+                      onChange={e => setRollDeltaThreshold(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <input
+                      type="number"
+                      min={0.3}
+                      max={0.95}
+                      step={0.01}
+                      value={rollDeltaThreshold}
+                      onChange={e => {
+                        const next = Number(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setRollDeltaThreshold(Math.min(0.95, Math.max(0.3, next)));
+                      }}
+                      className="w-20 rounded-lg border px-2 py-1 text-right"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
+                  當持有部位的 Delta 達到或超過此閾值，且距離到期超過兩個交易日時，系統會提前 Roll up &amp; out。
+                </p>
+              </div>
+            )}
             <div className="md:col-span-3">
               <button onClick={run} disabled={busy} className="rounded-xl bg-black text-white px-4 py-2 shadow">
                 {busy ? '計算中…' : '開始回測'}
@@ -426,72 +649,143 @@ export default function Page() {
 
         {result && (
           <>
-            <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
+            <section
+              className={`${
+                isFullscreen
+                  ? 'fixed inset-0 z-50 m-0 flex h-screen w-screen flex-col overflow-hidden bg-white p-4 shadow-xl md:p-8'
+                  : 'rounded-2xl border bg-white shadow-sm p-4 md:p-6 flex flex-col'
+              }`}
+            >
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
-              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
                 <div>
                   目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
                 </div>
-                <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
-                  <span>數據點密度</span>
-                  <select
-                    className="rounded-lg border px-2 py-1 text-xs md:text-sm"
-                    value={pointDensity}
-                    onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                  <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
+                    <span>數據點密度</span>
+                    <select
+                      className="rounded-lg border px-2 py-1 text-xs md:text-sm"
+                      value={pointDensity}
+                      onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                    >
+                      <option value="dense">高</option>
+                      <option value="normal">中</option>
+                      <option value="sparse">低</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreen(current => !current)}
+                    className="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 md:text-sm"
                   >
-                    <option value="dense">高</option>
-                    <option value="normal">中</option>
-                    <option value="sparse">低</option>
-                  </select>
-                </label>
+                    {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
+                  </button>
+                </div>
               </div>
-              <div className="h-80" onWheel={handleWheelZoom}>
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 md:text-sm">
+                {SERIES_CONFIG.map(series => {
+                  const active = seriesVisibility[series.key];
+                  return (
+                    <button
+                      key={series.key}
+                      type="button"
+                      onClick={() => toggleSeries(series.key)}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+                        active ? 'border-transparent bg-slate-100 text-slate-800' : 'border-slate-200 text-slate-400'
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <span
+                        className="h-1.5 w-10 rounded-full"
+                        style={
+                          series.strokeDasharray
+                            ? {
+                                backgroundImage: `repeating-linear-gradient(90deg, ${series.color}, ${series.color} 10px, transparent 10px, transparent 18px)`,
+                                opacity: active ? 1 : 0.3,
+                              }
+                            : {
+                                backgroundColor: series.color,
+                                opacity: active ? 1 : 0.3,
+                              }
+                        }
+                      />
+                      <span>{series.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[32rem]'}
+                style={{ overscrollBehavior: 'contain' }}
+                ref={chartContainerRef}
+                onWheel={handleWheelZoom}
+                onMouseDown={handleMouseDown}
+              >
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
-                    <YAxis tick={{ fontSize: 12 }} />
+                    <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
+                    <YAxis
+                      yAxisId="price"
+                      orientation="right"
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={formatPriceTick}
+                      width={72}
+                    />
                     <Tooltip content={<CustomTooltip />} />
-                    <Legend />
                     <Brush
-                      dataKey="date"
+                      dataKey="CoveredCall"
                       data={chartData}
                       height={24}
                       travellerWidth={12}
                       stroke="#94a3b8"
-                      startIndex={brushRange ? brushRange.startIndex : undefined}
-                      endIndex={brushRange ? brushRange.endIndex : undefined}
+                      startIndex={activeBrushRange.startIndex}
+                      endIndex={activeBrushRange.endIndex}
                       onChange={handleBrushChange}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="BuyAndHold"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke="#2563eb"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="CoveredCall"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke="#f97316"
-                    />
-                    {visibleSettlements.map((point: any, idx: number) => (
+                    >
+                      <LineChart data={chartData}>
+                        <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                        <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                      </LineChart>
+                    </Brush>
+                    {SERIES_CONFIG.map(series => (
+                      <Line
+                        key={series.key}
+                        type="monotone"
+                        dataKey={series.dataKey}
+                        dot={false}
+                        strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                        stroke={series.color}
+                        name={series.label}
+                        yAxisId={series.axis}
+                        hide={!seriesVisibility[series.key]}
+                        strokeDasharray={series.strokeDasharray}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                    {visibleRolls.map((point: any, idx: number) => (
+                      <ReferenceLine
+                        key={`roll-${point.date}-${idx}`}
+                        x={point.date}
+                        stroke="#6366f1"
+                        strokeDasharray="4 2"
+                        strokeOpacity={0.6}
+                        label={<RollMarkerLabel />}
+                      />
+                    ))}
+                    {visibleExpirations.map((point: any, idx: number) => (
                       <ReferenceDot
                         key={`${point.date}-${idx}`}
                         x={point.date}
                         y={point.totalValue}
+                        yAxisId="value"
                         r={6}
                         fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
                         stroke="white"
                         strokeWidth={1.5}
-                        label={{
-                          value: formatPnL(point.pnl),
-                          position: 'top',
-                          fill: point.pnl >= 0 ? '#16a34a' : '#dc2626',
-                          fontSize: 11,
-                        }}
+                        isFront
                       />
                     ))}
                   </LineChart>
@@ -501,12 +795,12 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
                 {summaryCards.map(card => (
-                  <div key={card.label} className="p-3 rounded-xl bg-slate-50 border">
-                    <div className="opacity-60">{card.label}</div>
-                    <div className="text-lg font-semibold">{card.value}</div>
-                    {card.footnote && <div className="text-xs opacity-70 mt-1">{card.footnote}</div>}
+                  <div key={card.label} className="flex h-full flex-col rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</div>
+                    <div className="mt-2 text-xl font-semibold leading-snug text-slate-800">{card.value}</div>
+                    {card.footnote && <div className="mt-auto text-xs text-slate-500">{card.footnote}</div>}
                   </div>
                 ))}
               </div>
