@@ -66,6 +66,7 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: numbe
         fill="#ede9fe"
         stroke="#5b21b6"
         strokeWidth={1}
+        opacity={0.95}
       />
       <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
         Roll up &amp; out
@@ -111,6 +112,9 @@ const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
     </g>
   );
 };
+
+const panelClass =
+  'rounded-3xl border border-slate-200/80 bg-white/95 shadow-[0_20px_45px_-28px_rgb(15_23_42_/_55%)] backdrop-blur-sm';
 
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
@@ -574,75 +578,150 @@ export default function Page() {
   }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
-    <main className="p-6 md:p-10">
-      <div className="mx-auto grid max-w-7xl gap-6 lg:gap-8">
-        <header className="flex items-center justify-between">
-          <h1 className="text-2xl md:text-3xl font-bold">Covered Call 策略回測器（Next.js 版）</h1>
-          <div className="text-sm opacity-70">資料來源：Yahoo Finance（經由伺服器端代理）</div>
+    <main className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 px-6 py-8 md:px-10">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 lg:gap-12">
+        <header className="flex flex-col gap-3 border-b border-slate-200/80 pb-6 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Covered Call Lab</p>
+            <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">Covered Call 策略回測器</h1>
+          </div>
+          <div className="text-sm text-slate-500">資料來源：Yahoo Finance（經由伺服器端代理）</div>
         </header>
 
-        <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
-          <h2 className="font-semibold mb-4">參數設定</h2>
-          <div className="grid gap-4 md:grid-cols-3">
+        <section className={`${panelClass} space-y-6 p-6 md:p-8`}>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-slate-900">參數設定</h2>
+            <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Simulation Inputs</span>
+          </div>
+          <div className="grid gap-5 md:grid-cols-3">
             <label className="space-y-2">
               <div className="text-sm">股票代碼（美股）</div>
-              <input className="w-full rounded-xl border p-2" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="如 AAPL、TSLA" />
+              <input
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={ticker}
+                onChange={e => setTicker(e.target.value.toUpperCase())}
+                placeholder="如 AAPL、TSLA"
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">開始日期</div>
-              <input type="date" className="w-full rounded-xl border p-2" value={start} onChange={e => setStart(e.target.value)} />
+              <input
+                type="date"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={start}
+                onChange={e => setStart(e.target.value)}
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">結束日期</div>
-              <input type="date" className="w-full rounded-xl border p-2" value={end} onChange={e => setEnd(e.target.value)} />
+              <input
+                type="date"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={end}
+                onChange={e => setEnd(e.target.value)}
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">初始現金（USD，可為0）</div>
-              <input type="number" className="w-full rounded-xl border p-2" value={initialCapital} onChange={e => setInitialCapital(Number(e.target.value))} />
+              <input
+                type="number"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={initialCapital}
+                onChange={e => setInitialCapital(Number(e.target.value))}
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">持有股數（covered shares）</div>
-              <input type="number" className="w-full rounded-xl border p-2" value={shares} onChange={e => setShares(Number(e.target.value))} />
+              <input
+                type="number"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={shares}
+                onChange={e => setShares(Number(e.target.value))}
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">標的 Delta 目標：{targetDelta.toFixed(2)}</div>
-              <input type="range" min={0.1} max={0.6} step={0.01} value={targetDelta} onChange={e => setTargetDelta(Number(e.target.value))} />
+              <input
+                type="range"
+                min={0.1}
+                max={0.6}
+                step={0.01}
+                value={targetDelta}
+                onChange={e => setTargetDelta(Number(e.target.value))}
+                className="accent-indigo-500"
+              />
             </label>
             <label className="space-y-2">
               <div className="text-sm">到期頻率</div>
-              <select className="w-full rounded-xl border p-2" value={freq} onChange={e => setFreq(e.target.value as any)}>
+              <select
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={freq}
+                onChange={e => setFreq(e.target.value as any)}
+              >
                 <option value="weekly">週選擇權</option>
                 <option value="monthly">月選擇權</option>
               </select>
             </label>
             <label className="space-y-2">
               <div className="text-sm">覆寫 IV（年化，選填）</div>
-              <input type="number" step="0.01" className="w-full rounded-xl border p-2" placeholder="例如 0.35" value={ivOverride ?? ''} onChange={e => setIvOverride(e.target.value === '' ? null : Number(e.target.value))} />
+              <input
+                type="number"
+                step="0.01"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                placeholder="例如 0.35"
+                value={ivOverride ?? ''}
+                onChange={e => setIvOverride(e.target.value === '' ? null : Number(e.target.value))}
+              />
             </label>
-            <label className="flex items-center gap-3 mt-6">
-              <input type="checkbox" checked={reinvestPremium} onChange={e => setReinvestPremium(e.target.checked)} />
-              <span>權利金再投入增持股票</span>
+            <label className="mt-6 flex items-center gap-3 rounded-2xl bg-slate-50/80 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={reinvestPremium}
+                onChange={e => setReinvestPremium(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-sm">權利金再投入增持股票</span>
             </label>
-            <div className="md:col-span-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4 text-sm">
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={roundStrikeToInt} onChange={e => setRoundStrikeToInt(e.target.checked)} />
+            <div className="grid gap-3 text-sm md:col-span-3 md:grid-cols-2 xl:grid-cols-4">
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={roundStrikeToInt}
+                  onChange={e => setRoundStrikeToInt(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
                 <span>Call 履約價取整數</span>
               </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={skipEarningsWeek} onChange={e => setSkipEarningsWeek(e.target.checked)} />
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={skipEarningsWeek}
+                  onChange={e => setSkipEarningsWeek(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
                 <span>避開財報週（不賣 Call）</span>
               </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={dynamicContracts} onChange={e => setDynamicContracts(e.target.checked)} />
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={dynamicContracts}
+                  onChange={e => setDynamicContracts(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
                 <span>股數每滿 100 股自動增加張數</span>
               </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={enableRoll} onChange={e => setEnableRoll(e.target.checked)} />
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={enableRoll}
+                  onChange={e => setEnableRoll(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
                 <span>Delta 達閾值且距到期 &gt; 2 天時 Roll up &amp; out</span>
               </label>
             </div>
             {enableRoll && (
-              <div className="md:col-span-3 flex flex-col gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4 text-xs md:text-sm">
+              <div className="md:col-span-3 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 text-xs md:text-sm">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <span className="font-semibold text-indigo-900">Roll Delta 門檻：Δ {rollDeltaThreshold.toFixed(2)}</span>
                   <div className="flex flex-1 items-center gap-3 md:max-w-md">
@@ -653,7 +732,7 @@ export default function Page() {
                       step={0.01}
                       value={rollDeltaThreshold}
                       onChange={e => setRollDeltaThreshold(Number(e.target.value))}
-                      className="flex-1"
+                      className="flex-1 accent-indigo-500"
                     />
                     <input
                       type="number"
@@ -666,7 +745,7 @@ export default function Page() {
                         if (!Number.isFinite(next)) return;
                         setRollDeltaThreshold(Math.min(0.95, Math.max(0.3, next)));
                       }}
-                      className="w-20 rounded-lg border px-2 py-1 text-right"
+                      className="w-24 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-right shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                     />
                   </div>
                 </div>
@@ -676,7 +755,11 @@ export default function Page() {
               </div>
             )}
             <div className="md:col-span-3">
-              <button onClick={run} disabled={busy} className="rounded-xl bg-black text-white px-4 py-2 shadow">
+              <button
+                onClick={run}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 {busy ? '計算中…' : '開始回測'}
               </button>
             </div>
@@ -690,11 +773,14 @@ export default function Page() {
               className={`${
                 isFullscreen
                   ? 'fixed inset-0 z-50 m-0 flex h-screen w-screen flex-col overflow-hidden bg-white p-4 shadow-xl md:p-8'
-                  : 'rounded-2xl border bg-white shadow-sm p-4 md:p-6 flex flex-col'
+                  : `${panelClass} flex flex-col p-5 md:p-8`
               }`}
             >
-              <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">資產曲線（USD）</h2>
+                <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Performance</span>
+              </div>
+              <div className="mb-4 flex flex-col gap-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between md:text-sm">
                 <div>
                   目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
                 </div>
@@ -702,7 +788,7 @@ export default function Page() {
                   <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
                     <span>數據點密度</span>
                     <select
-                      className="rounded-lg border px-2 py-1 text-xs md:text-sm"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 md:text-sm"
                       value={pointDensity}
                       onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
                     >
@@ -714,7 +800,7 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={() => setIsFullscreen(current => !current)}
-                    className="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 md:text-sm"
+                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 md:text-sm"
                   >
                     {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
                   </button>
@@ -729,7 +815,7 @@ export default function Page() {
                       type="button"
                       onClick={() => toggleSeries(series.key)}
                       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
-                        active ? 'border-transparent bg-slate-100 text-slate-800' : 'border-slate-200 text-slate-400'
+                        active ? 'border-transparent bg-slate-100 text-slate-800 shadow-sm' : 'border-slate-200 text-slate-400'
                       }`}
                       aria-pressed={active}
                     >
@@ -753,7 +839,7 @@ export default function Page() {
                 })}
               </div>
               <div
-                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[32rem]'}
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[34rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
                 style={{ overscrollBehavior: 'contain' }}
                 ref={chartContainerRef}
                 onWheel={handleWheelZoom}
@@ -761,7 +847,7 @@ export default function Page() {
               >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
                     <YAxis
@@ -822,14 +908,20 @@ export default function Page() {
               </ChartErrorBoundary>
             </section>
 
-            <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
-              <h2 className="font-semibold mb-4">回測摘要</h2>
+            <section className={`${panelClass} p-6 md:p-8`}>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">回測摘要</h2>
+                <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
+              </div>
               <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
                 {summaryCards.map(card => (
-                  <div key={card.label} className="flex h-full flex-col rounded-xl border bg-slate-50 p-4">
-                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</div>
-                    <div className="mt-2 text-xl font-semibold leading-snug text-slate-800">{card.value}</div>
-                    {card.footnote && <div className="mt-auto text-xs text-slate-500">{card.footnote}</div>}
+                  <div
+                    key={card.label}
+                    className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm"
+                  >
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{card.label}</div>
+                    <div className="mt-3 text-2xl font-semibold leading-tight text-slate-900">{card.value}</div>
+                    {card.footnote && <div className="mt-auto text-xs text-slate-400">{card.footnote}</div>}
                   </div>
                 ))}
               </div>
@@ -838,14 +930,14 @@ export default function Page() {
         )}
 
         {!result && (
-          <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
+          <section className={`${panelClass} p-6 md:p-8`}>
             <h2 className="font-semibold mb-3">如何操作？</h2>
             <p className="text-sm leading-7">輸入美股代碼（如 AAPL、TSLA）、日期區間與參數，點擊「開始回測」。系統會透過伺服器端 API 代理 Yahoo，計算買入持有與不同週期的 covered call 策略資產曲線並比較。</p>
             <p className="text-sm leading-7">可調整 Delta 目標（常見 0.2–0.4）、週/月選擇權，以及是否將權利金再投入。若想更貼近實務市場報價，可覆寫年化隱含波動（IV）。</p>
           </section>
         )}
 
-        <footer className="text-xs text-center opacity-60 pt-4">此工具僅供教育研究，不構成投資建議。</footer>
+        <footer className="pt-8 text-center text-xs text-slate-400">此工具僅供教育研究，不構成投資建議。</footer>
       </div>
     </main>
   );
