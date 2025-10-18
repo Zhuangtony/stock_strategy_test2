@@ -280,6 +280,14 @@ export default function Page() {
     return { startIndex: startIdx, endIndex: endIdx };
   }, [brushRange, chartLength]);
 
+  const brushStartIndex = activeBrushRange.startIndex;
+  const brushEndIndex = activeBrushRange.endIndex;
+
+  const brushUpdateId = useMemo(
+    () => `${chartLength}-${brushStartIndex}-${brushEndIndex}`,
+    [chartLength, brushStartIndex, brushEndIndex],
+  );
+
   const visibleRangeLabel = useMemo(() => {
     if (!visibleData.length) return '';
     const first = visibleData[0]?.date;
@@ -741,8 +749,9 @@ export default function Page() {
                       height={24}
                       travellerWidth={12}
                       stroke="#94a3b8"
-                      startIndex={activeBrushRange.startIndex}
-                      endIndex={activeBrushRange.endIndex}
+                      startIndex={brushStartIndex}
+                      endIndex={brushEndIndex}
+                      updateId={brushUpdateId}
                       onChange={handleBrushChange}
                     >
                       <LineChart data={chartData}>
