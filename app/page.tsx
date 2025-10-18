@@ -101,9 +101,9 @@ type SeriesKey = SeriesConfig['key'];
 
 const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   const { cx, cy } = props as DotProps;
-  if (typeof cx !== 'number' || typeof cy !== 'number') return <></>;
+  if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
   const settlement = (props as any)?.payload?.settlement;
-  if (!settlement || settlement.type !== 'expiry') return <></>;
+  if (!settlement || settlement.type !== 'expiry') return <g />;
   const color = settlement.pnl >= 0 ? '#22c55e' : '#ef4444';
   return (
     <g>
@@ -685,7 +685,7 @@ export default function Page() {
         </section>
 
         {result && (
-          <>
+          <React.Fragment>
             <section
               className={`${
                 isFullscreen
@@ -834,7 +834,7 @@ export default function Page() {
                 ))}
               </div>
             </section>
-          </>
+          </React.Fragment>
         )}
 
         {!result && (
