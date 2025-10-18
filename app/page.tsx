@@ -29,6 +29,51 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   };
 }
 
+type RollLabelViewBox = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+};
+
+const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: number }) => {
+  if (!viewBox && typeof x !== 'number') return null;
+  const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
+  const chartTop = viewBox?.y ?? 0;
+  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox.x ?? 0 : 0;
+  const chartRight = viewBox && viewBox.width && viewBox.width > 0 ? chartLeft + viewBox.width : null;
+  const labelWidth = 92;
+  const labelHeight = 22;
+  const offsetY = 10;
+
+  let rectX = baseX - labelWidth / 2;
+  if (chartRight != null) {
+    rectX = Math.min(rectX, chartRight - labelWidth - 4);
+  }
+  rectX = Math.max(chartLeft + 4, rectX);
+  const rectY = chartTop + offsetY;
+  const textX = rectX + labelWidth / 2;
+  const textY = rectY + labelHeight / 2 + 4;
+
+  return (
+    <g>
+      <rect
+        x={rectX}
+        y={rectY}
+        width={labelWidth}
+        height={labelHeight}
+        rx={labelHeight / 2}
+        fill="#ede9fe"
+        stroke="#5b21b6"
+        strokeWidth={1}
+      />
+      <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
+        Roll up &amp; out
+      </text>
+    </g>
+  );
+};
+
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
   const [start, setStart] = useState('2018-01-01');
@@ -178,11 +223,25 @@ export default function Page() {
   const visibleData = useMemo(() => {
     if (chartLength === 0) return [];
     if (!brushRange) return chartData;
-    const startIdx = Math.max(0, Math.min(chartLength - 1, brushRange.startIndex));
-    const endIdx = Math.max(0, Math.min(chartLength - 1, brushRange.endIndex));
-    const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-    return chartData.slice(lo, hi + 1);
+    const normalizedStart = Math.max(0, Math.min(chartLength - 1, Math.min(brushRange.startIndex, brushRange.endIndex)));
+    const normalizedEnd = Math.max(
+      normalizedStart,
+      Math.max(0, Math.min(chartLength - 1, Math.max(brushRange.startIndex, brushRange.endIndex))),
+    );
+    return chartData.slice(normalizedStart, normalizedEnd + 1);
   }, [brushRange, chartData, chartLength]);
+
+  const activeBrushRange = useMemo(() => {
+    if (chartLength === 0) {
+      return { startIndex: 0, endIndex: 0 };
+    }
+    if (!brushRange) {
+      return { startIndex: 0, endIndex: chartLength - 1 };
+    }
+    const startIdx = Math.max(0, Math.min(chartLength - 1, Math.min(brushRange.startIndex, brushRange.endIndex)));
+    const endIdx = Math.max(startIdx, Math.min(chartLength - 1, Math.max(brushRange.startIndex, brushRange.endIndex)));
+    return { startIndex: startIdx, endIndex: endIdx };
+  }, [brushRange, chartLength]);
 
   const visibleRangeLabel = useMemo(() => {
     if (!visibleData.length) return '';
@@ -318,11 +377,12 @@ export default function Page() {
       if (chartLength === 0) return;
       const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
       const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
-      if (startIdx === 0 && endIdx === chartLength - 1) {
+      const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+      if (lo === 0 && hi === chartLength - 1) {
         setBrushRange(null);
         return;
       }
-      setBrushRange({ startIndex: startIdx, endIndex: endIdx });
+      setBrushRange({ startIndex: lo, endIndex: hi });
     },
     [chartLength],
   );
@@ -333,7 +393,7 @@ export default function Page() {
       if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
-      const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
+      const baseRange = brushRange ? activeBrushRange : { startIndex: 0, endIndex: chartLength - 1 };
       let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
       let endIdx = Math.max(baseRange.startIndex, baseRange.endIndex);
 
@@ -352,18 +412,8 @@ export default function Page() {
 
       const center = (startIdx + endIdx) / 2;
       let newStart = Math.round(center - newSize / 2);
-      let newEnd = newStart + newSize - 1;
-
-      if (newStart < 0) {
-        newEnd += -newStart;
-        newStart = 0;
-      }
-
-      if (newEnd > chartLength - 1) {
-        const overshoot = newEnd - (chartLength - 1);
-        newStart = Math.max(0, newStart - overshoot);
-        newEnd = chartLength - 1;
-      }
+      newStart = Math.max(0, Math.min(chartLength - newSize, newStart));
+      const newEnd = newStart + newSize - 1;
 
       if (newStart <= 0 && newEnd >= chartLength - 1) {
         setBrushRange(null);
@@ -371,7 +421,7 @@ export default function Page() {
         setBrushRange({ startIndex: newStart, endIndex: newEnd });
       }
     },
-    [brushRange, chartLength],
+    [activeBrushRange, brushRange, chartLength],
   );
 
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -545,20 +595,25 @@ export default function Page() {
                 onMouseDown={handleMouseDown}
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <LineChart data={renderedData} margin={{ top: 64, right: 24, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Legend />
+                    <Legend
+                      verticalAlign="top"
+                      align="left"
+                      iconType="plainline"
+                      wrapperStyle={{ paddingBottom: 12, fontSize: 12 }}
+                    />
                     <Brush
                       dataKey="CoveredCall"
                       data={chartData}
                       height={24}
                       travellerWidth={12}
                       stroke="#94a3b8"
-                      startIndex={brushRange ? brushRange.startIndex : undefined}
-                      endIndex={brushRange ? brushRange.endIndex : undefined}
+                      startIndex={activeBrushRange.startIndex}
+                      endIndex={activeBrushRange.endIndex}
                       onChange={handleBrushChange}
                     >
                       <LineChart data={chartData}>
@@ -572,6 +627,7 @@ export default function Page() {
                       dot={false}
                       strokeWidth={2}
                       stroke="#2563eb"
+                      name="Buy & Hold"
                     />
                     <Line
                       type="monotone"
@@ -579,6 +635,7 @@ export default function Page() {
                       dot={false}
                       strokeWidth={2}
                       stroke="#f97316"
+                      name="Covered Call"
                     />
                     {visibleRolls.map((point: any, idx: number) => (
                       <ReferenceLine
@@ -587,12 +644,7 @@ export default function Page() {
                         stroke="#6366f1"
                         strokeDasharray="4 2"
                         strokeOpacity={0.6}
-                        label={{
-                          value: 'Roll',
-                          position: 'top',
-                          fill: '#4338ca',
-                          fontSize: 11,
-                        }}
+                        label={<RollMarkerLabel />}
                       />
                     ))}
                     {visibleExpirations.map((point: any, idx: number) => (
@@ -604,12 +656,7 @@ export default function Page() {
                         fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
                         stroke="white"
                         strokeWidth={1.5}
-                        label={{
-                          value: formatPnL(point.pnl),
-                          position: 'top',
-                          fill: point.pnl >= 0 ? '#16a34a' : '#dc2626',
-                          fontSize: 11,
-                        }}
+                        isFront
                       />
                     ))}
                   </LineChart>
