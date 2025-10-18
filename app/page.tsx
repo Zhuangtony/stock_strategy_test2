@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import type { DotProps, LineProps } from 'recharts';
 import { runBacktest } from '../lib/backtest';
+import ChartErrorBoundary from '../components/ChartErrorBoundary';
 
 async function fetchYahooDailyViaApi(ticker: string, start: string, end: string) {
   const u = `/api/yahoo?symbol=${encodeURIComponent(ticker)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
@@ -358,12 +359,10 @@ export default function Page() {
         }
       });
     }
-
     sampled.sort((a, b) => {
       if (a.date === b.date) return 0;
       return a.date > b.date ? 1 : -1;
     });
-
     return sampled;
   }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
@@ -802,7 +801,8 @@ export default function Page() {
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
-              </div>
+                </div>
+              </ChartErrorBoundary>
             </section>
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
