@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -50,7 +50,7 @@ export default function Page() {
   const r = 0.03;
   const q = 0.00;
 
-  async function run() {
+  const run = useCallback(async () => {
     setBusy(true); setError(null); setResult(null);
     try {
       const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
@@ -61,7 +61,6 @@ export default function Page() {
         r,
         q,
         targetDelta,
-        callDeltaOverride,
         freq,
         ivOverride,
         reinvestPremium,
@@ -75,9 +74,25 @@ export default function Page() {
     } catch (e: any) {
       setError(e.message || String(e));
     } finally { setBusy(false); }
-  }
+  }, [
+    dynamicContracts,
+    enableRoll,
+    end,
+    freq,
+    initialCapital,
+    ivOverride,
+    r,
+    q,
+    reinvestPremium,
+    roundStrikeToInt,
+    shares,
+    skipEarningsWeek,
+    start,
+    targetDelta,
+    ticker,
+  ]);
 
-  const chartData = result?.curve || [];
+  const chartData = useMemo(() => result?.curve ?? [], [result]);
   const chartLength = chartData.length;
   const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
 
@@ -109,9 +124,12 @@ export default function Page() {
     return settlementPoints.filter((point: any) => dateSet.has(point.date));
   }, [settlementPoints, visibleData]);
 
-  const formatCurrency = (value: number, fractionDigits = 2) =>
-    value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits });
-  const formatPnL = (value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`;
+  const formatCurrency = useCallback(
+    (value: number, fractionDigits = 2) =>
+      value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits }),
+    [],
+  );
+  const formatPnL = useCallback((value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`, [formatCurrency]);
 
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -157,6 +175,64 @@ export default function Page() {
       </div>
     );
   };
+
+  const handleBrushChange = useCallback(
+    (range: any) => {
+      if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
+      if (chartLength === 0) return;
+      const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
+      const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
+      if (startIdx === 0 && endIdx === chartLength - 1) {
+        setBrushRange(null);
+        return;
+      }
+      setBrushRange({ startIndex: startIdx, endIndex: endIdx });
+    },
+    [chartLength],
+  );
+
+  const summaryCards = useMemo(() => {
+    if (!result) return [] as {
+      label: string;
+      value: string;
+      footnote?: string;
+    }[];
+    return [
+      {
+        label: '估計歷史波動（HV，年化）',
+        value: `${(result.hv * 100).toFixed(1)}%`,
+      },
+      {
+        label: '使用 IV（年化）',
+        value: `${(result.ivUsed * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Call Delta 目標',
+        value: result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --',
+      },
+      {
+        label: 'Buy&Hold 總報酬',
+        value: `${(result.bhReturn * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Covered Call 總報酬',
+        value: `${(result.ccReturn * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Buy&Hold 最後持有股數',
+        value: result.bhShares.toLocaleString(),
+      },
+      {
+        label: 'Covered Call 最後持有股數',
+        value: result.ccShares.toLocaleString(),
+      },
+      {
+        label: 'Covered Call 勝率',
+        value: `${((result.ccWinRate ?? 0) * 100).toFixed(1)}%`,
+        footnote: `${result.ccSettlementCount ?? 0} 次結算`,
+      },
+    ];
+  }, [result]);
 
   return (
     <main className="p-6 md:p-10">
@@ -279,17 +355,7 @@ export default function Page() {
                       stroke="#94a3b8"
                       startIndex={brushRange ? brushRange.startIndex : undefined}
                       endIndex={brushRange ? brushRange.endIndex : undefined}
-                      onChange={range => {
-                        if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
-                        if (chartLength === 0) return;
-                        const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
-                        const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
-                        if (startIdx === 0 && endIdx === chartLength - 1) {
-                          setBrushRange(null);
-                          return;
-                        }
-                        setBrushRange({ startIndex: startIdx, endIndex: endIdx });
-                      }}
+                      onChange={handleBrushChange}
                     />
                     <Line
                       type="monotone"
@@ -330,43 +396,13 @@ export default function Page() {
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">估計歷史波動（HV，年化）</div>
-                  <div className="text-lg font-semibold">{(result.hv * 100).toFixed(1)}%</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">使用 IV（年化）</div>
-                  <div className="text-lg font-semibold">{(result.ivUsed * 100).toFixed(1)}%</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Call Delta 目標</div>
-                  <div className="text-lg font-semibold">
-                    {result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --'}
+                {summaryCards.map(card => (
+                  <div key={card.label} className="p-3 rounded-xl bg-slate-50 border">
+                    <div className="opacity-60">{card.label}</div>
+                    <div className="text-lg font-semibold">{card.value}</div>
+                    {card.footnote && <div className="text-xs opacity-70 mt-1">{card.footnote}</div>}
                   </div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Buy&Hold 總報酬</div>
-                  <div className="text-lg font-semibold">{(result.bhReturn * 100).toFixed(1)}%</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Covered Call 總報酬</div>
-                  <div className="text-lg font-semibold">{(result.ccReturn * 100).toFixed(1)}%</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Buy&Hold 最後持有股數</div>
-                  <div className="text-lg font-semibold">{result.bhShares.toLocaleString()}</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Covered Call 最後持有股數</div>
-                  <div className="text-lg font-semibold">{result.ccShares.toLocaleString()}</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border">
-                  <div className="opacity-60">Covered Call 勝率</div>
-                  <div className="text-lg font-semibold">
-                    {result.ccWinRate != null ? (result.ccWinRate * 100).toFixed(1) : '0.0'}%
-                  </div>
-                  <div className="text-xs opacity-70 mt-1">{result.ccSettlementCount ?? 0} 次結算</div>
-                </div>
+                ))}
               </div>
             </section>
           </>

@@ -53,7 +53,6 @@ export function runBacktest(
     dynamicContracts: boolean;
     enableRoll: boolean;
     earningsDates?: string[];
-    callDeltaOverride?: number | null;
   },
 ) {
   const dates = ohlc.map(d => d.date);
@@ -62,10 +61,7 @@ export function runBacktest(
   const iv = params.ivOverride && params.ivOverride > 0 ? params.ivOverride : hv;
   const clampDelta = (d: number) => Math.min(0.95, Math.max(0.05, d));
   const baseDelta = typeof params.targetDelta === 'number' && Number.isFinite(params.targetDelta) ? params.targetDelta : 0.3;
-  const overrideCandidate = params.callDeltaOverride;
-  const strikeTargetDelta = clampDelta(
-    typeof overrideCandidate === 'number' && Number.isFinite(overrideCandidate) ? overrideCandidate : baseDelta,
-  );
+  const strikeTargetDelta = clampDelta(baseDelta);
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
