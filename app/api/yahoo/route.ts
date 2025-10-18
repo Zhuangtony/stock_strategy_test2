@@ -23,7 +23,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTs}&period2=${endTs}&interval=1d&includePrePost=false&events=div,splits`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTs}&period2=${endTs}&interval=1d&includePrePost=false&events=div,splits,earnings`;
 
   try {
     const res = await fetch(url, { cache: 'no-store' });
@@ -46,7 +46,25 @@ export async function GET(req: Request) {
       if (close[i] == null || !Number.isFinite(close[i])) continue;
       rows.push({ date: toDate(ts[i]), open: open[i], high: high[i], low: low[i], close: close[i], adjClose: adjClose[i] ?? close[i] });
     }
-    return NextResponse.json({ rows });
+    const earningsRaw = r.events?.earnings;
+    const earningsDatesSet = new Set<string>();
+    if (earningsRaw && typeof earningsRaw === 'object') {
+      for (const key of Object.keys(earningsRaw)) {
+        const entry = earningsRaw[key];
+        if (!entry) continue;
+        const dates = Array.isArray(entry.earningsDate) ? entry.earningsDate : [];
+        for (const item of dates) {
+          const raw = typeof item?.raw === 'number' ? item.raw : typeof item === 'number' ? item : null;
+          if (typeof raw === 'number' && Number.isFinite(raw)) {
+            earningsDatesSet.add(toDate(raw));
+          }
+        }
+        if (typeof entry?.date === 'number' && Number.isFinite(entry.date)) {
+          earningsDatesSet.add(toDate(entry.date));
+        }
+      }
+    }
+    return NextResponse.json({ rows, earningsDates: Array.from(earningsDatesSet) });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'fetch failed' }, { status: 500 });
   }
