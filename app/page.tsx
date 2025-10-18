@@ -22,7 +22,10 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   if (!res.ok) throw new Error(`API ${res.status}`);
   const json = await res.json();
   if (!json?.rows?.length) throw new Error('沒有資料（檢查代碼/日期）');
-  return json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[];
+  return {
+    rows: json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[],
+    earningsDates: Array.isArray(json.earningsDates) ? (json.earningsDates as string[]) : [],
+  };
 }
 
 export default function Page() {
@@ -35,6 +38,10 @@ export default function Page() {
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
+  const [roundStrikeToInt, setRoundStrikeToInt] = useState(true);
+  const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
+  const [dynamicContracts, setDynamicContracts] = useState(true);
+  const [enableRoll, setEnableRoll] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -45,9 +52,23 @@ export default function Page() {
   async function run() {
     setBusy(true); setError(null); setResult(null);
     try {
-      const data = await fetchYahooDailyViaApi(ticker.trim(), start, end);
-      if (data.length < 30) throw new Error('資料太少，請放大日期區間。');
-      const res = runBacktest(data, { initialCapital, shares, r, q, targetDelta, freq, ivOverride, reinvestPremium });
+      const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
+      if (payload.rows.length < 30) throw new Error('資料太少，請放大日期區間。');
+      const res = runBacktest(payload.rows, {
+        initialCapital,
+        shares,
+        r,
+        q,
+        targetDelta,
+        freq,
+        ivOverride,
+        reinvestPremium,
+        roundStrikeToInt,
+        skipEarningsWeek,
+        dynamicContracts,
+        enableRoll,
+        earningsDates: payload.earningsDates,
+      });
       setResult(res);
     } catch (e: any) {
       setError(e.message || String(e));
@@ -203,6 +224,24 @@ export default function Page() {
               <input type="checkbox" checked={reinvestPremium} onChange={e => setReinvestPremium(e.target.checked)} />
               <span>權利金再投入增持股票</span>
             </label>
+            <div className="md:col-span-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4 text-sm">
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={roundStrikeToInt} onChange={e => setRoundStrikeToInt(e.target.checked)} />
+                <span>Call 履約價取整數</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={skipEarningsWeek} onChange={e => setSkipEarningsWeek(e.target.checked)} />
+                <span>避開財報週（不賣 Call）</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={dynamicContracts} onChange={e => setDynamicContracts(e.target.checked)} />
+                <span>股數每滿 100 股自動增加張數</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={enableRoll} onChange={e => setEnableRoll(e.target.checked)} />
+                <span>S ≥ 0.99×K 且距到期 &gt;2 天時 Roll up &amp; out</span>
+              </label>
+            </div>
             <div className="md:col-span-3">
               <button onClick={run} disabled={busy} className="rounded-xl bg-black text-white px-4 py-2 shadow">
                 {busy ? '計算中…' : '開始回測'}
@@ -330,7 +369,7 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">估計歷史波動（HV，年化）</div>
                   <div className="text-lg font-semibold">{(result.hv * 100).toFixed(1)}%</div>
@@ -354,6 +393,13 @@ export default function Page() {
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">Covered Call 最後持有股數</div>
                   <div className="text-lg font-semibold">{result.ccShares.toLocaleString()}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Covered Call 勝率</div>
+                  <div className="text-lg font-semibold">
+                    {result.ccWinRate != null ? (result.ccWinRate * 100).toFixed(1) : '0.0'}%
+                  </div>
+                  <div className="text-xs opacity-70 mt-1">{result.ccSettlementCount ?? 0} 次結算</div>
                 </div>
               </div>
             </section>
