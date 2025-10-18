@@ -115,8 +115,20 @@ export default function Page() {
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip formatter={(v: any) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)} />
                     <Legend />
-                    <Line type="monotone" dataKey="BuyAndHold" dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="CoveredCall" dot={false} strokeWidth={2} />
+                    <Line
+                      type="monotone"
+                      dataKey="BuyAndHold"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#2563eb"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="CoveredCall"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#f97316"
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
