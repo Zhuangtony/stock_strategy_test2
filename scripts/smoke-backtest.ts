@@ -91,8 +91,6 @@ async function main() {
     ivUsed: result.ivUsed,
     bhReturn: result.bhReturn,
     ccReturn: result.ccReturn,
-    ccWinRate: result.ccWinRate,
-    ccSettlementCount: result.ccSettlementCount,
   });
 }
 
@@ -100,4 +98,3 @@ main().catch((e) => {
   console.error('Smoke failed:', e?.message || e);
   process.exit(1);
 });
-
