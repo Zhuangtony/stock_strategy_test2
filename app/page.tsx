@@ -249,7 +249,6 @@ export default function Page() {
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
                     <Brush
-                      data={chartData}
                       dataKey="date"
                       height={24}
                       travellerWidth={12}
