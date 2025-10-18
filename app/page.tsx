@@ -47,6 +47,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const r = 0.03;
   const q = 0.00;
@@ -113,17 +114,66 @@ export default function Page() {
   }, [chartLength]);
 
   useEffect(() => {
+    if (!result) {
+      setIsFullscreen(false);
+    }
+  }, [result]);
+
+  useEffect(() => {
     const container = chartContainerRef.current;
     if (!container) return;
+
+    let isPointerInside = false;
+
     const preventWheelScroll = (event: WheelEvent) => {
+      if (!isPointerInside) return;
       if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
     };
-    container.addEventListener('wheel', preventWheelScroll, { passive: false });
+
+    const handlePointerEnter = () => {
+      isPointerInside = true;
+      window.addEventListener('wheel', preventWheelScroll, { passive: false });
+    };
+
+    const handlePointerLeave = () => {
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+    };
+
+    container.addEventListener('pointerenter', handlePointerEnter);
+    container.addEventListener('pointerleave', handlePointerLeave);
+
     return () => {
-      container.removeEventListener('wheel', preventWheelScroll);
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+      container.removeEventListener('pointerenter', handlePointerEnter);
+      container.removeEventListener('pointerleave', handlePointerLeave);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isFullscreen]);
 
   const visibleData = useMemo(() => {
     if (chartLength === 0) return [];
@@ -331,10 +381,6 @@ export default function Page() {
     }
   }, []);
 
-  const suppressWheelDefault = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-  }, []);
-
   const summaryCards = useMemo(() => {
     if (!result) return [] as {
       label: string;
@@ -457,31 +503,45 @@ export default function Page() {
 
         {result && (
           <>
-            <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
+            <section
+              className={`${
+                isFullscreen
+                  ? 'fixed inset-0 z-50 m-0 flex h-screen w-screen flex-col overflow-hidden bg-white p-4 shadow-xl md:p-8'
+                  : 'rounded-2xl border bg-white shadow-sm p-4 md:p-6 flex flex-col'
+              }`}
+            >
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
-              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
                 <div>
                   目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
                 </div>
-                <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
-                  <span>數據點密度</span>
-                  <select
-                    className="rounded-lg border px-2 py-1 text-xs md:text-sm"
-                    value={pointDensity}
-                    onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                  <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
+                    <span>數據點密度</span>
+                    <select
+                      className="rounded-lg border px-2 py-1 text-xs md:text-sm"
+                      value={pointDensity}
+                      onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                    >
+                      <option value="dense">高</option>
+                      <option value="normal">中</option>
+                      <option value="sparse">低</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreen(current => !current)}
+                    className="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 md:text-sm"
                   >
-                    <option value="dense">高</option>
-                    <option value="normal">中</option>
-                    <option value="sparse">低</option>
-                  </select>
-                </label>
+                    {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
+                  </button>
+                </div>
               </div>
               <div
-                className="h-80"
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-80'}
                 style={{ overscrollBehavior: 'contain' }}
                 ref={chartContainerRef}
                 onWheel={handleWheelZoom}
-                onWheelCapture={suppressWheelDefault}
                 onMouseDown={handleMouseDown}
               >
                 <ResponsiveContainer width="100%" height="100%">
