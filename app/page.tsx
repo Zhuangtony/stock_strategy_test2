@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -11,6 +11,7 @@ import {
   Legend,
   CartesianGrid,
   ReferenceDot,
+  ReferenceLine,
   Brush,
   TooltipProps,
 } from 'recharts';
@@ -94,13 +95,35 @@ export default function Page() {
 
   const chartData = useMemo(() => result?.curve ?? [], [result]);
   const chartLength = chartData.length;
-  const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+  const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
+  const rollPoints = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'roll'),
+    [settlementPoints],
+  );
+  const expirationSettlements = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'expiry' && point.qty > 0),
+    [settlementPoints],
+  );
 
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
+
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    const preventWheelScroll = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+    };
+    container.addEventListener('wheel', preventWheelScroll, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', preventWheelScroll);
+    };
+  }, []);
 
   const visibleData = useMemo(() => {
     if (chartLength === 0) return [];
@@ -118,11 +141,17 @@ export default function Page() {
     return first === last ? first : `${first} ~ ${last}`;
   }, [visibleData]);
 
-  const visibleSettlements = useMemo(() => {
+  const visibleExpirations = useMemo(() => {
     if (!visibleData.length) return [] as any[];
     const dateSet = new Set(visibleData.map((point: any) => point.date));
-    return settlementPoints.filter((point: any) => dateSet.has(point.date));
-  }, [settlementPoints, visibleData]);
+    return expirationSettlements.filter((point: any) => dateSet.has(point.date));
+  }, [expirationSettlements, visibleData]);
+
+  const visibleRolls = useMemo(() => {
+    if (!visibleData.length) return [] as any[];
+    const dateSet = new Set(visibleData.map((point: any) => point.date));
+    return rollPoints.filter((point: any) => dateSet.has(point.date));
+  }, [rollPoints, visibleData]);
 
   const renderedData = useMemo(() => {
     const points: any[] = Array.isArray(visibleData) ? visibleData : [];
@@ -151,7 +180,10 @@ export default function Page() {
       sampled.push(lastPoint);
     }
 
-    const settlementDates = new Set(visibleSettlements.map((point: any) => point.date));
+    const settlementDates = new Set([
+      ...visibleExpirations.map((point: any) => point.date),
+      ...visibleRolls.map((point: any) => point.date),
+    ]);
     if (settlementDates.size > 0) {
       points.forEach(point => {
         if (settlementDates.has(point.date) && !sampled.some(item => item.date === point.date)) {
@@ -166,7 +198,7 @@ export default function Page() {
     });
 
     return sampled;
-  }, [pointDensity, visibleData, visibleSettlements]);
+  }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
   const formatCurrency = useCallback(
     (value: number, fractionDigits = 2) =>
@@ -178,6 +210,11 @@ export default function Page() {
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
     const settlement = (payload[0].payload as any)?.settlement;
+    const settlementTitle = settlement
+      ? settlement.type === 'roll'
+        ? 'Roll up & out'
+        : 'Covered Call 結算'
+      : null;
     return (
       <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
         <div className="mb-2 text-sm font-semibold">{label}</div>
@@ -205,14 +242,19 @@ export default function Page() {
             </div>
           ))}
         </div>
-        {settlement && settlement.qty > 0 && (
+        {settlement && settlementTitle && (
           <div className="mt-3 border-t pt-2">
-            <div className="font-semibold">Covered Call 結算</div>
+            <div className="font-semibold">{settlementTitle}</div>
             <div className="mt-1 space-y-1">
               <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
               <div>履約價：{settlement.strike.toFixed(2)}</div>
               <div>標的價格：{settlement.underlying.toFixed(2)}</div>
-              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              {typeof settlement.qty === 'number' && settlement.qty > 0 && (
+                <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              )}
+              {settlement.type === 'roll' && (
+                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+              )}
             </div>
           </div>
         )}
@@ -238,6 +280,8 @@ export default function Page() {
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (chartLength === 0) return;
+      if (event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
 
       const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
       let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
@@ -435,6 +479,7 @@ export default function Page() {
               <div
                 className="h-80"
                 style={{ overscrollBehavior: 'contain' }}
+                ref={chartContainerRef}
                 onWheel={handleWheelZoom}
                 onWheelCapture={suppressWheelDefault}
                 onMouseDown={handleMouseDown}
@@ -475,7 +520,22 @@ export default function Page() {
                       strokeWidth={2}
                       stroke="#f97316"
                     />
-                    {visibleSettlements.map((point: any, idx: number) => (
+                    {visibleRolls.map((point: any, idx: number) => (
+                      <ReferenceLine
+                        key={`roll-${point.date}-${idx}`}
+                        x={point.date}
+                        stroke="#6366f1"
+                        strokeDasharray="4 2"
+                        strokeOpacity={0.6}
+                        label={{
+                          value: 'Roll',
+                          position: 'top',
+                          fill: '#4338ca',
+                          fontSize: 11,
+                        }}
+                      />
+                    ))}
+                    {visibleExpirations.map((point: any, idx: number) => (
                       <ReferenceDot
                         key={`${point.date}-${idx}`}
                         x={point.date}
