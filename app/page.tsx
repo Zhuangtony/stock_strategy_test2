@@ -190,7 +190,10 @@ export default function Page() {
     setSeriesVisibility(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const chartData = useMemo(() => result?.curve ?? [], [result]);
+  const chartData = useMemo(() => {
+    if (!Array.isArray(result?.curve)) return [] as any[];
+    return result.curve.map((point: any) => ({ ...point }));
+  }, [result]);
   const chartLength = chartData.length;
   const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
   const rollPoints = useMemo(
@@ -208,6 +211,20 @@ export default function Page() {
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
+
+  useEffect(() => {
+    setBrushRange(current => {
+      if (!current || chartLength === 0) return current;
+      const startIdx = Math.max(0, Math.min(chartLength - 1, Math.round(current.startIndex)));
+      const endIdx = Math.max(0, Math.min(chartLength - 1, Math.round(current.endIndex)));
+      const nextStart = Math.min(startIdx, endIdx);
+      const nextEnd = Math.max(startIdx, endIdx);
+      if (nextStart === current.startIndex && nextEnd === current.endIndex) {
+        return current;
+      }
+      return { startIndex: nextStart, endIndex: nextEnd };
+    });
+  }, [chartLength, brushRange]);
 
   useEffect(() => {
     if (!result) {
@@ -335,17 +352,17 @@ export default function Page() {
     const step = Math.max(1, Math.ceil(points.length / target));
 
     if (step <= 1) {
-      return points;
+      return points.map(point => ({ ...point }));
     }
 
     const sampled: any[] = [];
     for (let i = 0; i < points.length; i += step) {
-      sampled.push(points[i]);
+      sampled.push({ ...points[i] });
     }
 
     const lastPoint = points[points.length - 1];
     if (sampled[sampled.length - 1]?.date !== lastPoint.date) {
-      sampled.push(lastPoint);
+      sampled.push({ ...lastPoint });
     }
 
     const settlementDates = new Set([
@@ -355,7 +372,7 @@ export default function Page() {
     if (settlementDates.size > 0) {
       points.forEach(point => {
         if (settlementDates.has(point.date) && !sampled.some(item => item.date === point.date)) {
-          sampled.push(point);
+          sampled.push({ ...point });
         }
       });
     }
