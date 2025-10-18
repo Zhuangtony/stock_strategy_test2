@@ -266,7 +266,7 @@ export default function Page() {
               </div>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <LineChart data={visibleData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
