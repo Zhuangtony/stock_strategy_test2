@@ -8,7 +8,6 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   CartesianGrid,
   ReferenceDot,
   ReferenceLine,
@@ -74,6 +73,31 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: numbe
   );
 };
 
+type SeriesConfig = {
+  key: 'buyAndHold' | 'coveredCall' | 'underlying' | 'callStrike';
+  label: string;
+  color: string;
+  dataKey: 'BuyAndHold' | 'CoveredCall' | 'UnderlyingPrice' | 'CallStrike';
+  axis: 'value' | 'price';
+  strokeDasharray?: string;
+};
+
+const SERIES_CONFIG: readonly SeriesConfig[] = [
+  { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
+  { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
+  { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
+  {
+    key: 'callStrike',
+    label: '賣出履約價',
+    color: '#16a34a',
+    dataKey: 'CallStrike',
+    axis: 'price',
+    strokeDasharray: '6 3',
+  },
+];
+
+type SeriesKey = SeriesConfig['key'];
+
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
   const [start, setStart] = useState('2018-01-01');
@@ -88,11 +112,18 @@ export default function Page() {
   const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
   const [dynamicContracts, setDynamicContracts] = useState(true);
   const [enableRoll, setEnableRoll] = useState(true);
+  const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.7);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>({
+    buyAndHold: true,
+    coveredCall: true,
+    underlying: true,
+    callStrike: true,
+  });
 
   const r = 0.03;
   const q = 0.00;
@@ -115,6 +146,7 @@ export default function Page() {
         skipEarningsWeek,
         dynamicContracts,
         enableRoll,
+        rollDeltaThreshold,
         earningsDates: payload.earningsDates,
       });
       setResult(res);
@@ -137,7 +169,12 @@ export default function Page() {
     start,
     targetDelta,
     ticker,
+    rollDeltaThreshold,
   ]);
+
+  const toggleSeries = useCallback((key: SeriesKey) => {
+    setSeriesVisibility(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const chartData = useMemo(() => result?.curve ?? [], [result]);
   const chartLength = chartData.length;
@@ -315,10 +352,16 @@ export default function Page() {
     [],
   );
   const formatPnL = useCallback((value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`, [formatCurrency]);
+  const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), [formatCurrency]);
+  const formatPriceTick = useCallback(
+    (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    [],
+  );
 
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
     const settlement = (payload[0].payload as any)?.settlement;
+    const callDelta = (payload[0].payload as any)?.CallDelta;
     const settlementTitle = settlement
       ? settlement.type === 'roll'
         ? 'Roll up & out'
@@ -338,7 +381,10 @@ export default function Page() {
                 {(() => {
                   const rawValue = item.value;
                   if (typeof rawValue === 'number') {
-                    return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    if (item.dataKey === 'UnderlyingPrice' || item.dataKey === 'CallStrike') {
+                      return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    }
+                    return formatCurrency(rawValue, 0);
                   }
                   if (Array.isArray(rawValue)) {
                     return rawValue
@@ -361,10 +407,18 @@ export default function Page() {
               {typeof settlement.qty === 'number' && settlement.qty > 0 && (
                 <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
               )}
+              {typeof settlement.delta === 'number' && (
+                <div>Delta：Δ {settlement.delta.toFixed(2)}</div>
+              )}
               {settlement.type === 'roll' && (
                 <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
               )}
             </div>
+          </div>
+        )}
+        {typeof callDelta === 'number' && (
+          <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+            當前 Delta：Δ {callDelta.toFixed(2)}
           </div>
         )}
       </div>
@@ -451,6 +505,14 @@ export default function Page() {
         value: result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --',
       },
       {
+        label: 'Roll Delta 門檻',
+        value: enableRoll
+          ? result.rollDeltaTrigger != null
+            ? `Δ ${result.rollDeltaTrigger.toFixed(2)}`
+            : `Δ ${rollDeltaThreshold.toFixed(2)}`
+          : '未啟用',
+      },
+      {
         label: 'Buy&Hold 總報酬',
         value: `${(result.bhReturn * 100).toFixed(1)}%`,
       },
@@ -472,11 +534,11 @@ export default function Page() {
         footnote: `${result.ccSettlementCount ?? 0} 次結算`,
       },
     ];
-  }, [result]);
+  }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
     <main className="p-6 md:p-10">
-      <div className="max-w-6xl mx-auto grid gap-6">
+      <div className="mx-auto grid max-w-7xl gap-6 lg:gap-8">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl md:text-3xl font-bold">Covered Call 策略回測器（Next.js 版）</h1>
           <div className="text-sm opacity-70">資料來源：Yahoo Finance（經由伺服器端代理）</div>
@@ -539,9 +601,43 @@ export default function Page() {
               </label>
               <label className="flex items-center gap-3">
                 <input type="checkbox" checked={enableRoll} onChange={e => setEnableRoll(e.target.checked)} />
-                <span>S ≥ 0.99×K 且距到期 &gt;2 天時 Roll up &amp; out</span>
+                <span>Delta 達閾值且距到期 &gt; 2 天時 Roll up &amp; out</span>
               </label>
             </div>
+            {enableRoll && (
+              <div className="md:col-span-3 flex flex-col gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4 text-xs md:text-sm">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <span className="font-semibold text-indigo-900">Roll Delta 門檻：Δ {rollDeltaThreshold.toFixed(2)}</span>
+                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
+                    <input
+                      type="range"
+                      min={0.3}
+                      max={0.95}
+                      step={0.01}
+                      value={rollDeltaThreshold}
+                      onChange={e => setRollDeltaThreshold(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <input
+                      type="number"
+                      min={0.3}
+                      max={0.95}
+                      step={0.01}
+                      value={rollDeltaThreshold}
+                      onChange={e => {
+                        const next = Number(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setRollDeltaThreshold(Math.min(0.95, Math.max(0.3, next)));
+                      }}
+                      className="w-20 rounded-lg border px-2 py-1 text-right"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
+                  當持有部位的 Delta 達到或超過此閾值，且距離到期超過兩個交易日時，系統會提前 Roll up &amp; out。
+                </p>
+              </div>
+            )}
             <div className="md:col-span-3">
               <button onClick={run} disabled={busy} className="rounded-xl bg-black text-white px-4 py-2 shadow">
                 {busy ? '計算中…' : '開始回測'}
@@ -587,25 +683,58 @@ export default function Page() {
                   </button>
                 </div>
               </div>
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 md:text-sm">
+                {SERIES_CONFIG.map(series => {
+                  const active = seriesVisibility[series.key];
+                  return (
+                    <button
+                      key={series.key}
+                      type="button"
+                      onClick={() => toggleSeries(series.key)}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+                        active ? 'border-transparent bg-slate-100 text-slate-800' : 'border-slate-200 text-slate-400'
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <span
+                        className="h-1.5 w-10 rounded-full"
+                        style={
+                          series.strokeDasharray
+                            ? {
+                                backgroundImage: `repeating-linear-gradient(90deg, ${series.color}, ${series.color} 10px, transparent 10px, transparent 18px)`,
+                                opacity: active ? 1 : 0.3,
+                              }
+                            : {
+                                backgroundColor: series.color,
+                                opacity: active ? 1 : 0.3,
+                              }
+                        }
+                      />
+                      <span>{series.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <div
-                className={isFullscreen ? 'flex-1 min-h-0' : 'h-80'}
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[32rem]'}
                 style={{ overscrollBehavior: 'contain' }}
                 ref={chartContainerRef}
                 onWheel={handleWheelZoom}
                 onMouseDown={handleMouseDown}
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={renderedData} margin={{ top: 64, right: 24, bottom: 0, left: 0 }}>
+                  <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend
-                      verticalAlign="top"
-                      align="left"
-                      iconType="plainline"
-                      wrapperStyle={{ paddingBottom: 12, fontSize: 12 }}
+                    <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
+                    <YAxis
+                      yAxisId="price"
+                      orientation="right"
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={formatPriceTick}
+                      width={72}
                     />
+                    <Tooltip content={<CustomTooltip />} />
                     <Brush
                       dataKey="CoveredCall"
                       data={chartData}
@@ -621,22 +750,21 @@ export default function Page() {
                         <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
                       </LineChart>
                     </Brush>
-                    <Line
-                      type="monotone"
-                      dataKey="BuyAndHold"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke="#2563eb"
-                      name="Buy & Hold"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="CoveredCall"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke="#f97316"
-                      name="Covered Call"
-                    />
+                    {SERIES_CONFIG.map(series => (
+                      <Line
+                        key={series.key}
+                        type="monotone"
+                        dataKey={series.dataKey}
+                        dot={false}
+                        strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                        stroke={series.color}
+                        name={series.label}
+                        yAxisId={series.axis}
+                        hide={!seriesVisibility[series.key]}
+                        strokeDasharray={series.strokeDasharray}
+                        isAnimationActive={false}
+                      />
+                    ))}
                     {visibleRolls.map((point: any, idx: number) => (
                       <ReferenceLine
                         key={`roll-${point.date}-${idx}`}
@@ -652,6 +780,7 @@ export default function Page() {
                         key={`${point.date}-${idx}`}
                         x={point.date}
                         y={point.totalValue}
+                        yAxisId="value"
                         r={6}
                         fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
                         stroke="white"
@@ -666,12 +795,12 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
                 {summaryCards.map(card => (
-                  <div key={card.label} className="p-3 rounded-xl bg-slate-50 border">
-                    <div className="opacity-60">{card.label}</div>
-                    <div className="text-lg font-semibold">{card.value}</div>
-                    {card.footnote && <div className="text-xs opacity-70 mt-1">{card.footnote}</div>}
+                  <div key={card.label} className="flex h-full flex-col rounded-xl border bg-slate-50 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</div>
+                    <div className="mt-2 text-xl font-semibold leading-snug text-slate-800">{card.value}</div>
+                    {card.footnote && <div className="mt-auto text-xs text-slate-500">{card.footnote}</div>}
                   </div>
                 ))}
               </div>

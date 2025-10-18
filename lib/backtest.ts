@@ -1,4 +1,4 @@
-import { bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
+import { bsCallDelta, bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
 
 function getISOWeek(date: Date) {
   const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -53,6 +53,7 @@ export function runBacktest(
     dynamicContracts: boolean;
     enableRoll: boolean;
     earningsDates?: string[];
+    rollDeltaThreshold?: number;
   },
 ) {
   const dates = ohlc.map(d => d.date);
@@ -62,6 +63,11 @@ export function runBacktest(
   const clampDelta = (d: number) => Math.min(0.95, Math.max(0.05, d));
   const baseDelta = typeof params.targetDelta === 'number' && Number.isFinite(params.targetDelta) ? params.targetDelta : 0.3;
   const strikeTargetDelta = clampDelta(baseDelta);
+  const rollDeltaTrigger = clampDelta(
+    typeof params.rollDeltaThreshold === 'number' && Number.isFinite(params.rollDeltaThreshold)
+      ? params.rollDeltaThreshold
+      : 0.7,
+  );
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
@@ -95,6 +101,8 @@ export function runBacktest(
     expIdx: number;
   } = null;
   const cc_value: number[] = [];
+  const callStrikeSeries: (number | null)[] = [];
+  const callDeltaSeries: (number | null)[] = [];
   const settlements: {
     index: number;
     date: string;
@@ -105,6 +113,7 @@ export function runBacktest(
     premium: number;
     qty: number;
     type: 'roll' | 'expiry';
+    delta?: number;
   }[] = [];
   const rollEvents: {
     index: number;
@@ -115,6 +124,7 @@ export function runBacktest(
     underlying: number;
     premium: number;
     qty: number;
+    delta?: number;
   }[] = [];
 
   for (let i = 0; i < prices.length; i++) {
@@ -122,52 +132,56 @@ export function runBacktest(
 
     if (params.enableRoll && openCall) {
       const daysToExpiry = openCall.expIdx - i;
-      if (daysToExpiry > 2 && S >= 0.99 * openCall.strike) {
+      if (daysToExpiry > 2) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
-        const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
-        const closeCost = closeValue * (openCall.qty * 100);
-        cash -= closeCost;
-        const rollPnl = (openCall.premium - closeValue) * (openCall.qty * 100);
-        const totalAfterClose = cash + shares * S;
-        const rollRecord = {
-          index: i,
-          date: dates[i],
-          totalValue: totalAfterClose,
-          pnl: rollPnl,
-          strike: openCall.strike,
-          underlying: S,
-          premium: openCall.premium,
-          qty: openCall.qty,
-          type: 'roll' as const,
-        };
-        settlements.push(rollRecord);
-        rollEvents.push(rollRecord);
+        const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
+        if (currentDelta >= rollDeltaTrigger) {
+          const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
+          const closeCost = closeValue * (openCall.qty * 100);
+          cash -= closeCost;
+          const rollPnl = (openCall.premium - closeValue) * (openCall.qty * 100);
+          const totalAfterClose = cash + shares * S;
+          const rollRecord = {
+            index: i,
+            date: dates[i],
+            totalValue: totalAfterClose,
+            pnl: rollPnl,
+            strike: openCall.strike,
+            underlying: S,
+            premium: openCall.premium,
+            qty: openCall.qty,
+            type: 'roll' as const,
+            delta: currentDelta,
+          };
+          settlements.push(rollRecord);
+          rollEvents.push(rollRecord);
 
-        let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
-        if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
-        const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
-        let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
-        if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
-        const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
-        if (newStrike <= openCall.strike) {
-          newStrike = openCall.strike + minIncrement;
+          let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
+          if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
+          const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
+          let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
           if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
-        }
-        const newQty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
-        if (newQty > 0) {
-          const newPremium = bsCallPrice(S, newStrike, params.r, params.q, iv, newTerm);
-          openCall = { strike: newStrike, premium: newPremium, qty: newQty, sellIdx: i, expIdx: newExpIdx };
-          const premiumCash = newPremium * (newQty * 100);
-          cash += premiumCash;
-          if (params.reinvestPremium) {
-            const lotShares = Math.floor(premiumCash / S);
-            if (lotShares > 0) {
-              shares += lotShares;
-              cash -= lotShares * S;
-            }
+          const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
+          if (newStrike <= openCall.strike) {
+            newStrike = openCall.strike + minIncrement;
+            if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
           }
-        } else {
-          openCall = null;
+          const newQty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
+          if (newQty > 0) {
+            const newPremium = bsCallPrice(S, newStrike, params.r, params.q, iv, newTerm);
+            openCall = { strike: newStrike, premium: newPremium, qty: newQty, sellIdx: i, expIdx: newExpIdx };
+            const premiumCash = newPremium * (newQty * 100);
+            cash += premiumCash;
+            if (params.reinvestPremium) {
+              const lotShares = Math.floor(premiumCash / S);
+              if (lotShares > 0) {
+                shares += lotShares;
+                cash -= lotShares * S;
+              }
+            }
+          } else {
+            openCall = null;
+          }
         }
       }
     }
@@ -205,6 +219,7 @@ export function runBacktest(
       underlying: number;
       premium: number;
       qty: number;
+      delta?: number;
     } = null;
 
     const isLastDay = i === prices.length - 1;
@@ -230,12 +245,22 @@ export function runBacktest(
         underlying: Sexp,
         premium: openCall.premium,
         qty: openCall.qty,
+        delta: intrinsic > 0 ? 1 : 0,
       };
       openCall = null;
     }
 
     const total = cash + shares * prices[i];
     cc_value.push(total);
+    if (openCall) {
+      const remainingDays = Math.max(openCall.expIdx - i, 0);
+      const remainingTerm = Math.max(remainingDays / 252, 1 / 252);
+      callDeltaSeries.push(bsCallDelta(S, openCall.strike, params.r, params.q, iv, remainingTerm));
+      callStrikeSeries.push(openCall.strike);
+    } else {
+      callDeltaSeries.push(null);
+      callStrikeSeries.push(null);
+    }
     if (settlementNote) {
       settlements.push({
         index: i,
@@ -247,6 +272,7 @@ export function runBacktest(
         premium: settlementNote.premium,
         qty: settlementNote.qty,
         type: 'expiry',
+        delta: settlementNote.delta,
       });
     }
   }
@@ -255,6 +281,9 @@ export function runBacktest(
     date: d,
     BuyAndHold: bh_value[idx],
     CoveredCall: cc_value[idx],
+    UnderlyingPrice: prices[idx],
+    CallStrike: callStrikeSeries[idx],
+    CallDelta: callDeltaSeries[idx],
     settlement: null as null | {
       pnl: number;
       strike: number;
@@ -262,6 +291,7 @@ export function runBacktest(
       premium: number;
       qty: number;
       type: 'roll' | 'expiry';
+      delta?: number;
     },
   }));
 
@@ -273,6 +303,7 @@ export function runBacktest(
       premium: s.premium,
       qty: s.qty,
       type: s.type,
+      delta: s.delta,
     };
   }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
@@ -293,5 +324,6 @@ export function runBacktest(
     ccWinRate,
     ccSettlementCount: settlementTrades.length,
     effectiveTargetDelta: strikeTargetDelta,
+    rollDeltaTrigger,
   };
 }
