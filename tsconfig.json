@@ -22,7 +22,13 @@
       "react-dom",
       "vitest"
     ],
-    "baseUrl": "."
+    "baseUrl": ".",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
     "next-env.d.ts",
