@@ -1,7 +1,19 @@
 'use client';
 
-import React, { useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  CartesianGrid,
+  ReferenceDot,
+  Brush,
+  TooltipProps,
+} from 'recharts';
 import { runBacktest } from '../lib/backtest';
 
 async function fetchYahooDailyViaApi(ticker: string, start: string, end: string) {
@@ -10,7 +22,10 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   if (!res.ok) throw new Error(`API ${res.status}`);
   const json = await res.json();
   if (!json?.rows?.length) throw new Error('沒有資料（檢查代碼/日期）');
-  return json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[];
+  return {
+    rows: json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[],
+    earningsDates: Array.isArray(json.earningsDates) ? (json.earningsDates as string[]) : [],
+  };
 }
 
 export default function Page() {
@@ -23,6 +38,10 @@ export default function Page() {
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
+  const [roundStrikeToInt, setRoundStrikeToInt] = useState(true);
+  const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
+  const [dynamicContracts, setDynamicContracts] = useState(true);
+  const [enableRoll, setEnableRoll] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -33,9 +52,23 @@ export default function Page() {
   async function run() {
     setBusy(true); setError(null); setResult(null);
     try {
-      const data = await fetchYahooDailyViaApi(ticker.trim(), start, end);
-      if (data.length < 30) throw new Error('資料太少，請放大日期區間。');
-      const res = runBacktest(data, { initialCapital, shares, r, q, targetDelta, freq, ivOverride, reinvestPremium });
+      const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
+      if (payload.rows.length < 30) throw new Error('資料太少，請放大日期區間。');
+      const res = runBacktest(payload.rows, {
+        initialCapital,
+        shares,
+        r,
+        q,
+        targetDelta,
+        freq,
+        ivOverride,
+        reinvestPremium,
+        roundStrikeToInt,
+        skipEarningsWeek,
+        dynamicContracts,
+        enableRoll,
+        earningsDates: payload.earningsDates,
+      });
       setResult(res);
     } catch (e: any) {
       setError(e.message || String(e));
@@ -43,6 +76,85 @@ export default function Page() {
   }
 
   const chartData = result?.curve || [];
+  const chartLength = chartData.length;
+  const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+
+  const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+
+  useEffect(() => {
+    setBrushRange(null);
+  }, [chartLength]);
+
+  const visibleData = useMemo(() => {
+    if (chartLength === 0) return [];
+    if (!brushRange) return chartData;
+    const startIdx = Math.max(0, Math.min(chartLength - 1, brushRange.startIndex));
+    const endIdx = Math.max(0, Math.min(chartLength - 1, brushRange.endIndex));
+    const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+    return chartData.slice(lo, hi + 1);
+  }, [brushRange, chartData, chartLength]);
+
+  const visibleRangeLabel = useMemo(() => {
+    if (!visibleData.length) return '';
+    const first = visibleData[0]?.date;
+    const last = visibleData[visibleData.length - 1]?.date;
+    return first === last ? first : `${first} ~ ${last}`;
+  }, [visibleData]);
+
+  const visibleSettlements = useMemo(() => {
+    if (!visibleData.length) return [] as any[];
+    const dateSet = new Set(visibleData.map((point: any) => point.date));
+    return settlementPoints.filter((point: any) => dateSet.has(point.date));
+  }, [settlementPoints, visibleData]);
+
+  const formatCurrency = (value: number, fractionDigits = 2) =>
+    value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits });
+  const formatPnL = (value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`;
+
+  const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
+    if (!active || !payload || payload.length === 0) return null;
+    const settlement = (payload[0].payload as any)?.settlement;
+    return (
+      <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
+        <div className="mb-2 text-sm font-semibold">{label}</div>
+        <div className="space-y-1">
+          {payload.map(item => (
+            <div key={item.dataKey} className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: item.color || '#000' }} />
+                {item.name}
+              </span>
+              <span>
+                {(() => {
+                  const rawValue = item.value;
+                  if (typeof rawValue === 'number') {
+                    return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                  }
+                  if (Array.isArray(rawValue)) {
+                    return rawValue
+                      .map(v => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v))
+                      .join(', ');
+                  }
+                  return rawValue ?? '';
+                })()}
+              </span>
+            </div>
+          ))}
+        </div>
+        {settlement && settlement.qty > 0 && (
+          <div className="mt-3 border-t pt-2">
+            <div className="font-semibold">Covered Call 結算</div>
+            <div className="mt-1 space-y-1">
+              <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
+              <div>履約價：{settlement.strike.toFixed(2)}</div>
+              <div>標的價格：{settlement.underlying.toFixed(2)}</div>
+              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <main className="p-6 md:p-10">
@@ -94,6 +206,24 @@ export default function Page() {
               <input type="checkbox" checked={reinvestPremium} onChange={e => setReinvestPremium(e.target.checked)} />
               <span>權利金再投入增持股票</span>
             </label>
+            <div className="md:col-span-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4 text-sm">
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={roundStrikeToInt} onChange={e => setRoundStrikeToInt(e.target.checked)} />
+                <span>Call 履約價取整數</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={skipEarningsWeek} onChange={e => setSkipEarningsWeek(e.target.checked)} />
+                <span>避開財報週（不賣 Call）</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={dynamicContracts} onChange={e => setDynamicContracts(e.target.checked)} />
+                <span>股數每滿 100 股自動增加張數</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input type="checkbox" checked={enableRoll} onChange={e => setEnableRoll(e.target.checked)} />
+                <span>S ≥ 0.99×K 且距到期 &gt;2 天時 Roll up &amp; out</span>
+              </label>
+            </div>
             <div className="md:col-span-3">
               <button onClick={run} disabled={busy} className="rounded-xl bg-black text-white px-4 py-2 shadow">
                 {busy ? '計算中…' : '開始回測'}
@@ -107,16 +237,67 @@ export default function Page() {
           <>
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
+              <div className="mb-4 text-xs md:text-sm text-slate-600">
+                目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
+              </div>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip formatter={(v: any) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)} />
+                    <Tooltip content={<CustomTooltip />} />
                     <Legend />
-                    <Line type="monotone" dataKey="BuyAndHold" dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="CoveredCall" dot={false} strokeWidth={2} />
+                    <Brush
+                      dataKey="date"
+                      height={24}
+                      travellerWidth={12}
+                      stroke="#94a3b8"
+                      startIndex={brushRange ? brushRange.startIndex : undefined}
+                      endIndex={brushRange ? brushRange.endIndex : undefined}
+                      onChange={range => {
+                        if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
+                        if (chartLength === 0) return;
+                        const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
+                        const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
+                        if (startIdx === 0 && endIdx === chartLength - 1) {
+                          setBrushRange(null);
+                          return;
+                        }
+                        setBrushRange({ startIndex: startIdx, endIndex: endIdx });
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="BuyAndHold"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#2563eb"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="CoveredCall"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#f97316"
+                    />
+                    {visibleSettlements.map((point: any, idx: number) => (
+                      <ReferenceDot
+                        key={`${point.date}-${idx}`}
+                        x={point.date}
+                        y={point.totalValue}
+                        r={6}
+                        fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
+                        stroke="white"
+                        strokeWidth={1.5}
+                        label={{
+                          value: formatPnL(point.pnl),
+                          position: 'top',
+                          fill: point.pnl >= 0 ? '#16a34a' : '#dc2626',
+                          fontSize: 11,
+                        }}
+                      />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -124,7 +305,7 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">估計歷史波動（HV，年化）</div>
                   <div className="text-lg font-semibold">{(result.hv * 100).toFixed(1)}%</div>
@@ -140,6 +321,21 @@ export default function Page() {
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">Covered Call 總報酬</div>
                   <div className="text-lg font-semibold">{(result.ccReturn * 100).toFixed(1)}%</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Buy&Hold 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.bhShares.toLocaleString()}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Covered Call 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.ccShares.toLocaleString()}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Covered Call 勝率</div>
+                  <div className="text-lg font-semibold">
+                    {result.ccWinRate != null ? (result.ccWinRate * 100).toFixed(1) : '0.0'}%
+                  </div>
+                  <div className="text-xs opacity-70 mt-1">{result.ccSettlementCount ?? 0} 次結算</div>
                 </div>
               </div>
             </section>
