@@ -115,8 +115,20 @@ export default function Page() {
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip formatter={(v: any) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v)} />
                     <Legend />
-                    <Line type="monotone" dataKey="BuyAndHold" dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="CoveredCall" dot={false} strokeWidth={2} />
+                    <Line
+                      type="monotone"
+                      dataKey="BuyAndHold"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#2563eb"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="CoveredCall"
+                      dot={false}
+                      strokeWidth={2}
+                      stroke="#f97316"
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -124,7 +136,7 @@ export default function Page() {
 
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">回測摘要</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">估計歷史波動（HV，年化）</div>
                   <div className="text-lg font-semibold">{(result.hv * 100).toFixed(1)}%</div>
@@ -140,6 +152,14 @@ export default function Page() {
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">Covered Call 總報酬</div>
                   <div className="text-lg font-semibold">{(result.ccReturn * 100).toFixed(1)}%</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Buy&Hold 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.bhShares.toLocaleString()}</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Covered Call 最後持有股數</div>
+                  <div className="text-lg font-semibold">{result.ccShares.toLocaleString()}</div>
                 </div>
               </div>
             </section>

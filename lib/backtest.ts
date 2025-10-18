@@ -102,5 +102,13 @@ export function runBacktest(
   const out = dates.map((d, idx) => ({ date: d, BuyAndHold: bh_value[idx], CoveredCall: cc_value[idx] }));
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
   const ccReturn = (cc_value.at(-1)! / cc_value[0] - 1);
-  return { curve: out, bhReturn, ccReturn, hv, ivUsed: iv };
+  return {
+    curve: out,
+    bhReturn,
+    ccReturn,
+    hv,
+    ivUsed: iv,
+    bhShares: params.shares,
+    ccShares: shares,
+  };
 }
