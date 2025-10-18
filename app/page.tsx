@@ -35,7 +35,6 @@ export default function Page() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [shares, setShares] = useState(100);
   const [targetDelta, setTargetDelta] = useState(0.3);
-  const [callDeltaOverride, setCallDeltaOverride] = useState<number | null>(null);
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
@@ -239,7 +238,6 @@ export default function Page() {
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (chartLength === 0) return;
-      event.preventDefault();
 
       const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
       let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
@@ -281,6 +279,17 @@ export default function Page() {
     },
     [brushRange, chartLength],
   );
+
+  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
+  const suppressWheelDefault = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  }, []);
 
   const summaryCards = useMemo(() => {
     if (!result) return [] as {
@@ -361,28 +370,6 @@ export default function Page() {
               <input type="range" min={0.1} max={0.6} step={0.01} value={targetDelta} onChange={e => setTargetDelta(Number(e.target.value))} />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">Call Delta 覆寫（選填）</div>
-              <input
-                type="number"
-                min={0.05}
-                max={0.95}
-                step={0.01}
-                className="w-full rounded-xl border p-2"
-                placeholder="例如 0.25"
-                value={callDeltaOverride ?? ''}
-                onChange={e => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    setCallDeltaOverride(null);
-                    return;
-                  }
-                  const parsed = Number(raw);
-                  setCallDeltaOverride(Number.isFinite(parsed) ? parsed : null);
-                }}
-              />
-              <div className="text-xs text-slate-500">留空則沿用上方 Delta 目標，數值越低代表賣更 OTM 的 Call。</div>
-            </label>
-            <label className="space-y-2">
               <div className="text-sm">到期頻率</div>
               <select className="w-full rounded-xl border p-2" value={freq} onChange={e => setFreq(e.target.value as any)}>
                 <option value="weekly">週選擇權</option>
@@ -445,7 +432,13 @@ export default function Page() {
                   </select>
                 </label>
               </div>
-              <div className="h-80" onWheel={handleWheelZoom}>
+              <div
+                className="h-80"
+                style={{ overscrollBehavior: 'contain' }}
+                onWheel={handleWheelZoom}
+                onWheelCapture={suppressWheelDefault}
+                onMouseDown={handleMouseDown}
+              >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -454,7 +447,7 @@ export default function Page() {
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
                     <Brush
-                      dataKey="date"
+                      dataKey="CoveredCall"
                       data={chartData}
                       height={24}
                       travellerWidth={12}
@@ -462,7 +455,12 @@ export default function Page() {
                       startIndex={brushRange ? brushRange.startIndex : undefined}
                       endIndex={brushRange ? brushRange.endIndex : undefined}
                       onChange={handleBrushChange}
-                    />
+                    >
+                      <LineChart data={chartData}>
+                        <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                        <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                      </LineChart>
+                    </Brush>
                     <Line
                       type="monotone"
                       dataKey="BuyAndHold"
