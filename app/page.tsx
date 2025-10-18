@@ -150,7 +150,7 @@ export default function Page() {
       container.removeEventListener('pointerenter', handlePointerEnter);
       container.removeEventListener('pointerleave', handlePointerLeave);
     };
-  }, []);
+  }, [result, isFullscreen]);
 
   useEffect(() => {
     if (!isFullscreen) return;
