@@ -1,4 +1,4 @@
-import { bsCallPrice, bsCallDelta, findStrikeForTargetDelta, estimateHV } from './optionMath';
+import { bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
 
 function getISOWeek(date: Date) {
   const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -80,7 +80,9 @@ export function runBacktest(
   };
 
   const bh_value: number[] = [];
-  for (let i = 0; i < prices.length; i++) bh_value.push(params.initialCapital + params.shares * (prices[i] - prices[0]));
+  for (let i = 0; i < prices.length; i++) {
+    bh_value.push(params.initialCapital + params.shares * prices[i]);
+  }
 
   let cash = params.initialCapital;
   let shares = params.shares;
@@ -94,6 +96,17 @@ export function runBacktest(
   } = null;
   const cc_value: number[] = [];
   const settlements: {
+    index: number;
+    date: string;
+    totalValue: number;
+    pnl: number;
+    strike: number;
+    underlying: number;
+    premium: number;
+    qty: number;
+    type: 'roll' | 'expiry';
+  }[] = [];
+  const rollEvents: {
     index: number;
     date: string;
     totalValue: number;
@@ -116,7 +129,7 @@ export function runBacktest(
         cash -= closeCost;
         const rollPnl = (openCall.premium - closeValue) * (openCall.qty * 100);
         const totalAfterClose = cash + shares * S;
-        settlements.push({
+        const rollRecord = {
           index: i,
           date: dates[i],
           totalValue: totalAfterClose,
@@ -125,7 +138,10 @@ export function runBacktest(
           underlying: S,
           premium: openCall.premium,
           qty: openCall.qty,
-        });
+          type: 'roll' as const,
+        };
+        settlements.push(rollRecord);
+        rollEvents.push(rollRecord);
 
         let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
         if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
@@ -230,6 +246,7 @@ export function runBacktest(
         underlying: settlementNote.underlying,
         premium: settlementNote.premium,
         qty: settlementNote.qty,
+        type: 'expiry',
       });
     }
   }
@@ -244,6 +261,7 @@ export function runBacktest(
       underlying: number;
       premium: number;
       qty: number;
+      type: 'roll' | 'expiry';
     },
   }));
 
@@ -254,6 +272,7 @@ export function runBacktest(
       underlying: s.underlying,
       premium: s.premium,
       qty: s.qty,
+      type: s.type,
     };
   }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
@@ -270,6 +289,7 @@ export function runBacktest(
     bhShares: params.shares,
     ccShares: shares,
     settlements: settlements.map(({ index: _index, ...rest }) => rest),
+    rollEvents: rollEvents.map(({ index: _index, ...rest }) => rest),
     ccWinRate,
     ccSettlementCount: settlementTrades.length,
     effectiveTargetDelta: strikeTargetDelta,
