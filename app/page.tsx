@@ -43,6 +43,7 @@ export default function Page() {
   const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
   const [dynamicContracts, setDynamicContracts] = useState(true);
   const [enableRoll, setEnableRoll] = useState(true);
+  const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -124,6 +125,50 @@ export default function Page() {
     return settlementPoints.filter((point: any) => dateSet.has(point.date));
   }, [settlementPoints, visibleData]);
 
+  const renderedData = useMemo(() => {
+    const points: any[] = Array.isArray(visibleData) ? visibleData : [];
+    if (points.length === 0) return [];
+
+    const targetPointsMap: Record<typeof pointDensity, number> = {
+      dense: 1400,
+      normal: 900,
+      sparse: 500,
+    };
+
+    const target = targetPointsMap[pointDensity];
+    const step = Math.max(1, Math.ceil(points.length / target));
+
+    if (step <= 1) {
+      return points;
+    }
+
+    const sampled: any[] = [];
+    for (let i = 0; i < points.length; i += step) {
+      sampled.push(points[i]);
+    }
+
+    const lastPoint = points[points.length - 1];
+    if (sampled[sampled.length - 1]?.date !== lastPoint.date) {
+      sampled.push(lastPoint);
+    }
+
+    const settlementDates = new Set(visibleSettlements.map((point: any) => point.date));
+    if (settlementDates.size > 0) {
+      points.forEach(point => {
+        if (settlementDates.has(point.date) && !sampled.some(item => item.date === point.date)) {
+          sampled.push(point);
+        }
+      });
+    }
+
+    sampled.sort((a, b) => {
+      if (a.date === b.date) return 0;
+      return a.date > b.date ? 1 : -1;
+    });
+
+    return sampled;
+  }, [pointDensity, visibleData, visibleSettlements]);
+
   const formatCurrency = useCallback(
     (value: number, fractionDigits = 2) =>
       value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits }),
@@ -189,6 +234,52 @@ export default function Page() {
       setBrushRange({ startIndex: startIdx, endIndex: endIdx });
     },
     [chartLength],
+  );
+
+  const handleWheelZoom = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (chartLength === 0) return;
+      event.preventDefault();
+
+      const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
+      let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
+      let endIdx = Math.max(baseRange.startIndex, baseRange.endIndex);
+
+      const currentSize = endIdx - startIdx + 1;
+      const zoomIn = event.deltaY < 0;
+      const zoomFactor = zoomIn ? 0.85 : 1.15;
+      const minWindow = Math.min(Math.max(5, Math.round(chartLength * 0.05)), chartLength);
+
+      let newSize = Math.round(currentSize * zoomFactor);
+      newSize = Math.max(minWindow, Math.min(chartLength, newSize));
+
+      if (newSize >= chartLength) {
+        setBrushRange(null);
+        return;
+      }
+
+      const center = (startIdx + endIdx) / 2;
+      let newStart = Math.round(center - newSize / 2);
+      let newEnd = newStart + newSize - 1;
+
+      if (newStart < 0) {
+        newEnd += -newStart;
+        newStart = 0;
+      }
+
+      if (newEnd > chartLength - 1) {
+        const overshoot = newEnd - (chartLength - 1);
+        newStart = Math.max(0, newStart - overshoot);
+        newEnd = chartLength - 1;
+      }
+
+      if (newStart <= 0 && newEnd >= chartLength - 1) {
+        setBrushRange(null);
+      } else {
+        setBrushRange({ startIndex: newStart, endIndex: newEnd });
+      }
+    },
+    [brushRange, chartLength],
   );
 
   const summaryCards = useMemo(() => {
@@ -337,12 +428,26 @@ export default function Page() {
           <>
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
-              <div className="mb-4 text-xs md:text-sm text-slate-600">
-                目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
+              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
+                <div>
+                  目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
+                </div>
+                <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
+                  <span>數據點密度</span>
+                  <select
+                    className="rounded-lg border px-2 py-1 text-xs md:text-sm"
+                    value={pointDensity}
+                    onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                  >
+                    <option value="dense">高</option>
+                    <option value="normal">中</option>
+                    <option value="sparse">低</option>
+                  </select>
+                </label>
               </div>
-              <div className="h-80">
+              <div className="h-80" onWheel={handleWheelZoom}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={visibleData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
@@ -350,6 +455,7 @@ export default function Page() {
                     <Legend />
                     <Brush
                       dataKey="date"
+                      data={chartData}
                       height={24}
                       travellerWidth={12}
                       stroke="#94a3b8"
