@@ -1,20 +1,19 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-  import {
-    LineChart,
-    Line,
-    XAxis,
-    YAxis,
-    Tooltip,
-    ResponsiveContainer,
-    Legend,
-    CartesianGrid,
-    ReferenceDot,
-    ReferenceLine,
-    Brush,
-    TooltipProps,
-  } from 'recharts';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  ReferenceLine,
+  Brush,
+  TooltipProps,
+} from 'recharts';
+import type { DotProps, LineProps } from 'recharts';
 import { runBacktest } from '../lib/backtest';
 import ChartErrorBoundary from '../components/ChartErrorBoundary';
 
@@ -100,6 +99,19 @@ const SERIES_CONFIG: readonly SeriesConfig[] = [
 
 type SeriesKey = SeriesConfig['key'];
 
+const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
+  const { cx, cy } = props as DotProps;
+  if (typeof cx !== 'number' || typeof cy !== 'number') return <></>;
+  const settlement = (props as any)?.payload?.settlement;
+  if (!settlement || settlement.type !== 'expiry') return <></>;
+  const color = settlement.pnl >= 0 ? '#22c55e' : '#ef4444';
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={6} fill={color} stroke="white" strokeWidth={1.5} />
+    </g>
+  );
+};
+
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
   const [start, setStart] = useState('2018-01-01');
@@ -120,7 +132,6 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [chartRenderKey, setChartRenderKey] = useState(0);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>({
     buyAndHold: true,
     coveredCall: true,
@@ -291,66 +302,6 @@ export default function Page() {
     [chartLength, brushStartIndex, brushEndIndex],
   );
 
-  const handleBrushChange = useCallback(
-    (range: any) => {
-      if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
-      if (chartLength === 0) return;
-      const startIdx = Math.max(0, Math.min(chartLength - 1, range.startIndex));
-      const endIdx = Math.max(0, Math.min(chartLength - 1, range.endIndex));
-      const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-      if (lo === 0 && hi === chartLength - 1) {
-        setBrushRange(null);
-        return;
-      }
-      setBrushRange({ startIndex: lo, endIndex: hi });
-    },
-    [chartLength],
-  );
-
-  const handleWheelZoom = useCallback(
-    (event: React.WheelEvent<HTMLDivElement>) => {
-      if (chartLength === 0) return;
-      if (event.ctrlKey || event.metaKey) return;
-      event.preventDefault();
-
-      const baseRange = brushRange ? activeBrushRange : { startIndex: 0, endIndex: chartLength - 1 };
-      let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
-      let endIdx = Math.max(baseRange.startIndex, baseRange.endIndex);
-
-      const currentSize = endIdx - startIdx + 1;
-      const zoomIn = event.deltaY < 0;
-      const zoomFactor = zoomIn ? 0.85 : 1.15;
-      const minWindow = Math.min(Math.max(5, Math.round(chartLength * 0.05)), chartLength);
-
-      let newSize = Math.round(currentSize * zoomFactor);
-      newSize = Math.max(minWindow, Math.min(chartLength, newSize));
-
-      if (newSize >= chartLength) {
-        setBrushRange(null);
-        return;
-      }
-
-      const center = (startIdx + endIdx) / 2;
-      let newStart = Math.round(center - newSize / 2);
-      newStart = Math.max(0, Math.min(chartLength - newSize, newStart));
-      const newEnd = newStart + newSize - 1;
-
-      if (newStart <= 0 && newEnd >= chartLength - 1) {
-        setBrushRange(null);
-      } else {
-        setBrushRange({ startIndex: newStart, endIndex: newEnd });
-      }
-    },
-    [activeBrushRange, brushRange, chartLength],
-  );
-
-  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button === 1) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, []);
-
   const visibleRangeLabel = useMemo(() => {
     if (!visibleData.length) return '';
     const first = visibleData[0]?.date;
@@ -415,13 +366,27 @@ export default function Page() {
     return sampled;
   }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
-  const formatCurrency = (value: number, fractionDigits = 2) =>
-    value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits });
-  const formatPnL = (value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`;
+  const formatCurrency = useCallback(
+    (value: number, fractionDigits = 2) =>
+      value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits }),
+    [],
+  );
+  const formatPnL = useCallback((value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`, [formatCurrency]);
+  const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), [formatCurrency]);
+  const formatPriceTick = useCallback(
+    (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    [],
+  );
 
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
     const settlement = (payload[0].payload as any)?.settlement;
+    const callDelta = (payload[0].payload as any)?.CallDelta;
+    const settlementTitle = settlement
+      ? settlement.type === 'roll'
+        ? 'Roll up & out'
+        : 'Covered Call 結算'
+      : null;
     return (
       <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
         <div className="mb-2 text-sm font-semibold">{label}</div>
@@ -433,39 +398,163 @@ export default function Page() {
                 {item.name}
               </span>
               <span>
-                {typeof item.value === 'number'
-                  ? item.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                  : item.value}
+                {(() => {
+                  const rawValue = item.value;
+                  if (typeof rawValue === 'number') {
+                    if (item.dataKey === 'UnderlyingPrice' || item.dataKey === 'CallStrike') {
+                      return rawValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                    }
+                    return formatCurrency(rawValue, 0);
+                  }
+                  if (Array.isArray(rawValue)) {
+                    return rawValue
+                      .map(v => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v))
+                      .join(', ');
+                  }
+                  return rawValue ?? '';
+                })()}
               </span>
             </div>
           ))}
         </div>
-        {settlement && settlement.qty > 0 && (
+        {settlement && settlementTitle && (
           <div className="mt-3 border-t pt-2">
-            <div className="font-semibold">Covered Call 結算</div>
+            <div className="font-semibold">{settlementTitle}</div>
             <div className="mt-1 space-y-1">
               <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
               <div>履約價：{settlement.strike.toFixed(2)}</div>
               <div>標的價格：{settlement.underlying.toFixed(2)}</div>
-              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              {typeof settlement.qty === 'number' && settlement.qty > 0 && (
+                <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              )}
+              {typeof settlement.delta === 'number' && (
+                <div>Delta：Δ {settlement.delta.toFixed(2)}</div>
+              )}
+              {settlement.type === 'roll' && (
+                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+              )}
             </div>
+          </div>
+        )}
+        {typeof callDelta === 'number' && (
+          <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+            當前 Delta：Δ {callDelta.toFixed(2)}
           </div>
         )}
       </div>
     );
   };
 
-  const summaryCards = useMemo((): { label: string; value: string; footnote?: string }[] => {
-    if (!result) return [] as { label: string; value: string; footnote?: string }[];
+  const handleBrushChange = useCallback(
+    (range: any) => {
+      if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
+      if (chartLength === 0) return;
+      const startIdx = Math.max(0, Math.min(chartLength - 1, Math.round(range.startIndex)));
+      const endIdx = Math.max(0, Math.min(chartLength - 1, Math.round(range.endIndex)));
+      const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+      if (lo === 0 && hi === chartLength - 1) {
+        setBrushRange(null);
+        return;
+      }
+      setBrushRange({ startIndex: lo, endIndex: hi });
+    },
+    [chartLength],
+  );
+
+  const handleWheelZoom = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (chartLength === 0) return;
+      if (event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+
+      const baseRange = brushRange ? activeBrushRange : { startIndex: 0, endIndex: chartLength - 1 };
+      let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
+      let endIdx = Math.max(baseRange.startIndex, baseRange.endIndex);
+
+      const currentSize = endIdx - startIdx + 1;
+      const zoomIn = event.deltaY < 0;
+      const zoomFactor = zoomIn ? 0.85 : 1.15;
+      const minWindow = Math.min(Math.max(5, Math.round(chartLength * 0.05)), chartLength);
+
+      let newSize = Math.round(currentSize * zoomFactor);
+      newSize = Math.max(minWindow, Math.min(chartLength, newSize));
+
+      if (newSize >= chartLength) {
+        setBrushRange(null);
+        return;
+      }
+
+      const center = (startIdx + endIdx) / 2;
+      let newStart = Math.round(center - newSize / 2);
+      newStart = Math.max(0, Math.min(chartLength - newSize, newStart));
+      const newEnd = newStart + newSize - 1;
+
+      if (newStart <= 0 && newEnd >= chartLength - 1) {
+        setBrushRange(null);
+      } else {
+        setBrushRange({ startIndex: newStart, endIndex: newEnd });
+      }
+    },
+    [activeBrushRange, brushRange, chartLength],
+  );
+
+  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
+  const summaryCards = useMemo(() => {
+    if (!result) return [] as {
+      label: string;
+      value: string;
+      footnote?: string;
+    }[];
     return [
-      { label: '估計歷史波動（HV，年化）', value: `${(result.hv * 100).toFixed(1)}%` },
-      { label: '使用 IV（年化）', value: `${(result.ivUsed * 100).toFixed(1)}%` },
-      { label: 'Buy&Hold 總報酬', value: `${(result.bhReturn * 100).toFixed(1)}%` },
-      { label: 'Covered Call 總報酬', value: `${(result.ccReturn * 100).toFixed(1)}%` },
-      { label: 'Buy&Hold 期末持股數', value: (result.bhShares ?? 0).toLocaleString() },
-      { label: 'Covered Call 期末持股數', value: (result.ccShares ?? 0).toLocaleString() },
+      {
+        label: '估計歷史波動（HV，年化）',
+        value: `${(result.hv * 100).toFixed(1)}%`,
+      },
+      {
+        label: '使用 IV（年化）',
+        value: `${(result.ivUsed * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Call Delta 目標',
+        value: result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --',
+      },
+      {
+        label: 'Roll Delta 門檻',
+        value: enableRoll
+          ? result.rollDeltaTrigger != null
+            ? `Δ ${result.rollDeltaTrigger.toFixed(2)}`
+            : `Δ ${rollDeltaThreshold.toFixed(2)}`
+          : '未啟用',
+      },
+      {
+        label: 'Buy&Hold 總報酬',
+        value: `${(result.bhReturn * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Covered Call 總報酬',
+        value: `${(result.ccReturn * 100).toFixed(1)}%`,
+      },
+      {
+        label: 'Buy&Hold 最後持有股數',
+        value: result.bhShares.toLocaleString(),
+      },
+      {
+        label: 'Covered Call 最後持有股數',
+        value: result.ccShares.toLocaleString(),
+      },
+      {
+        label: 'Covered Call 勝率',
+        value: `${((result.ccWinRate ?? 0) * 100).toFixed(1)}%`,
+        footnote: `${result.ccSettlementCount ?? 0} 次結算`,
+      },
     ];
-  }, [result]);
+  }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
     <main className="p-6 md:p-10">
@@ -646,32 +735,28 @@ export default function Page() {
                   );
                 })}
               </div>
-              <ChartErrorBoundary onReset={() => setChartRenderKey(k => k + 1)}>
-                <div
-                  key={chartRenderKey}
-                  className={isFullscreen ? 'flex-1 min-h-0' : 'h-[32rem]'}
-                  style={{ overscrollBehavior: 'contain' }}
-                  ref={chartContainerRef}
-                  onWheel={handleWheelZoom}
-                  onMouseDown={handleMouseDown}
-                >
+              <div
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[32rem]'}
+                style={{ overscrollBehavior: 'contain' }}
+                ref={chartContainerRef}
+                onWheel={handleWheelZoom}
+                onMouseDown={handleMouseDown}
+              >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
-                    <YAxis yAxisId="value" tick={{ fontSize: 12 }} width={80} />
-                    <YAxis yAxisId="price" orientation="right" tick={{ fontSize: 12 }} width={72} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="BuyAndHold"
-                      dot={false}
-                      strokeWidth={2}
-                      stroke="#2563eb"
-                      yAxisId="value"
+                    <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
+                    <YAxis
+                      yAxisId="price"
+                      orientation="right"
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={formatPriceTick}
+                      width={72}
                     />
+                    <Tooltip content={<CustomTooltip />} />
                     <Brush
+                      key={brushUpdateId}
                       dataKey="CoveredCall"
                       data={chartData}
                       height={24}
@@ -692,7 +777,8 @@ export default function Page() {
                         key={series.key}
                         type="monotone"
                         dataKey={series.dataKey}
-                        dot={false}
+                        dot={series.key === 'coveredCall' ? settlementDotRenderer : false}
+                        activeDot={series.key === 'coveredCall' ? { r: 6 } : undefined}
                         strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
                         stroke={series.color}
                         name={series.label}
@@ -700,35 +786,17 @@ export default function Page() {
                         hide={!seriesVisibility[series.key]}
                         strokeDasharray={series.strokeDasharray}
                         isAnimationActive={false}
+                        connectNulls
                       />
                     ))}
                     {visibleRolls.map((point: any, idx: number) => (
                       <ReferenceLine
                         key={`roll-${point.date}-${idx}`}
                         x={point.date}
-                        yAxisId="value"
                         stroke="#6366f1"
                         strokeDasharray="4 2"
                         strokeOpacity={0.6}
                         label={<RollMarkerLabel />}
-                      />
-                    ))}
-                    {visibleExpirations.map((point: any, idx: number) => (
-                      <ReferenceDot
-                        key={`${point.date}-${idx}`}
-                        x={point.date}
-                        y={point.totalValue}
-                        yAxisId="value"
-                        r={6}
-                        fill={point.pnl >= 0 ? '#22c55e' : '#ef4444'}
-                        stroke="white"
-                        strokeWidth={1.5}
-                        label={{
-                          value: formatPnL(point.pnl),
-                          position: 'top',
-                          fill: point.pnl >= 0 ? '#16a34a' : '#dc2626',
-                          fontSize: 11,
-                        }}
                       />
                     ))}
                   </LineChart>
