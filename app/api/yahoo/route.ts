@@ -19,11 +19,16 @@ export async function GET(req: Request) {
   }
   const startTs = Math.floor(new Date(start).getTime() / 1000);
   const endTs = Math.floor(new Date(end).getTime() / 1000);
-  if (!(endTs > startTs)) {
+  if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) {
     return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
   }
+  if (endTs < startTs) {
+    return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
+  }
+  const minEndTs = startTs + 86400; // ensure at least one full trading day window when range collapses
+  const periodEndTs = endTs === startTs ? minEndTs : endTs;
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTs}&period2=${endTs}&interval=1d&includePrePost=false&events=div,splits,earnings`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${startTs}&period2=${periodEndTs}&interval=1d&includePrePost=false&events=div,splits,earnings`;
 
   try {
     const res = await fetch(url, { cache: 'no-store' });

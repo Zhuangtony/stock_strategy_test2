@@ -194,6 +194,7 @@ export function runBacktest(
           const T = Math.max((expIdx - boundaries[b] + 1) / 252, 1 / 252);
           const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
           if (qty > 0) {
+            const S = prices[i];
             let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
             if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
             const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
