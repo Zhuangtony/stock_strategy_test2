@@ -35,6 +35,7 @@ export default function Page() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [shares, setShares] = useState(100);
   const [targetDelta, setTargetDelta] = useState(0.3);
+  const [callDeltaOverride, setCallDeltaOverride] = useState<number | null>(null);
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
@@ -60,6 +61,7 @@ export default function Page() {
         r,
         q,
         targetDelta,
+        callDeltaOverride,
         freq,
         ivOverride,
         reinvestPremium,
@@ -192,6 +194,28 @@ export default function Page() {
               <input type="range" min={0.1} max={0.6} step={0.01} value={targetDelta} onChange={e => setTargetDelta(Number(e.target.value))} />
             </label>
             <label className="space-y-2">
+              <div className="text-sm">Call Delta 覆寫（選填）</div>
+              <input
+                type="number"
+                min={0.05}
+                max={0.95}
+                step={0.01}
+                className="w-full rounded-xl border p-2"
+                placeholder="例如 0.25"
+                value={callDeltaOverride ?? ''}
+                onChange={e => {
+                  const raw = e.target.value;
+                  if (raw === '') {
+                    setCallDeltaOverride(null);
+                    return;
+                  }
+                  const parsed = Number(raw);
+                  setCallDeltaOverride(Number.isFinite(parsed) ? parsed : null);
+                }}
+              />
+              <div className="text-xs text-slate-500">留空則沿用上方 Delta 目標，數值越低代表賣更 OTM 的 Call。</div>
+            </label>
+            <label className="space-y-2">
               <div className="text-sm">到期頻率</div>
               <select className="w-full rounded-xl border p-2" value={freq} onChange={e => setFreq(e.target.value as any)}>
                 <option value="weekly">週選擇權</option>
@@ -313,6 +337,12 @@ export default function Page() {
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">使用 IV（年化）</div>
                   <div className="text-lg font-semibold">{(result.ivUsed * 100).toFixed(1)}%</div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 border">
+                  <div className="opacity-60">Call Delta 目標</div>
+                  <div className="text-lg font-semibold">
+                    {result.effectiveTargetDelta != null ? `Δ ${result.effectiveTargetDelta.toFixed(2)}` : 'Δ --'}
+                  </div>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border">
                   <div className="opacity-60">Buy&Hold 總報酬</div>

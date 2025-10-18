@@ -53,12 +53,19 @@ export function runBacktest(
     dynamicContracts: boolean;
     enableRoll: boolean;
     earningsDates?: string[];
+    callDeltaOverride?: number | null;
   },
 ) {
   const dates = ohlc.map(d => d.date);
   const prices = ohlc.map(d => d.adjClose ?? d.close);
   const hv = estimateHV(prices);
   const iv = params.ivOverride && params.ivOverride > 0 ? params.ivOverride : hv;
+  const clampDelta = (d: number) => Math.min(0.95, Math.max(0.05, d));
+  const baseDelta = typeof params.targetDelta === 'number' && Number.isFinite(params.targetDelta) ? params.targetDelta : 0.3;
+  const overrideCandidate = params.callDeltaOverride;
+  const strikeTargetDelta = clampDelta(
+    typeof overrideCandidate === 'number' && Number.isFinite(overrideCandidate) ? overrideCandidate : baseDelta,
+  );
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
@@ -127,7 +134,7 @@ export function runBacktest(
         let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
         if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
         const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
-        let newStrike = findStrikeForTargetDelta(S, params.targetDelta, params.r, params.q, iv, newTerm);
+        let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
         if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
         const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
         if (newStrike <= openCall.strike) {
@@ -161,7 +168,7 @@ export function runBacktest(
           const T = Math.max((expIdx - boundaries[b] + 1) / 252, 1 / 252);
           const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
           if (qty > 0) {
-            let strike = findStrikeForTargetDelta(S, params.targetDelta, params.r, params.q, iv, T);
+            let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
             if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
             const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
             openCall = { strike, premium, qty, sellIdx: i, expIdx };
@@ -269,5 +276,6 @@ export function runBacktest(
     settlements: settlements.map(({ index: _index, ...rest }) => rest),
     ccWinRate,
     ccSettlementCount: settlementTrades.length,
+    effectiveTargetDelta: strikeTargetDelta,
   };
 }
