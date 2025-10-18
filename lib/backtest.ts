@@ -61,10 +61,33 @@ export function runBacktest(
 
   let cash = params.initialCapital;
   let shares = params.shares;
-  let openCall: null | { strike: number; premium: number; qty: number; sellIdx: number; expIdx: number } = null;
+  let openCall: null | {
+    strike: number;
+    premium: number;
+    qty: number;
+    sellIdx: number;
+    expIdx: number;
+  } = null;
   const cc_value: number[] = [];
+  const settlements: {
+    index: number;
+    date: string;
+    totalValue: number;
+    pnl: number;
+    strike: number;
+    underlying: number;
+    premium: number;
+    qty: number;
+  }[] = [];
 
   for (let i = 0; i < prices.length; i++) {
+    let settlementNote: null | {
+      pnl: number;
+      strike: number;
+      underlying: number;
+      premium: number;
+      qty: number;
+    } = null;
     for (let b = 0; b < boundaries.length; b += 2) {
       if (boundaries[b] === i) {
         const T = (boundaries[b + 1] - boundaries[b] + 1) / 252;
@@ -92,14 +115,56 @@ export function runBacktest(
           const rebuy = deliverable;
           if (rebuy > 0) { cash -= rebuy * Sexp; shares += rebuy; }
         }
+        const intrinsic = Math.max(0, Sexp - openCall.strike);
+        const pnl = (openCall.premium - intrinsic) * (openCall.qty * 100);
+        settlementNote = {
+          pnl,
+          strike: openCall.strike,
+          underlying: Sexp,
+          premium: openCall.premium,
+          qty: openCall.qty,
+        };
         openCall = null;
       }
     }
     const total = cash + shares * prices[i];
     cc_value.push(total);
+    if (settlementNote) {
+      settlements.push({
+        index: i,
+        date: dates[i],
+        totalValue: total,
+        pnl: settlementNote.pnl,
+        strike: settlementNote.strike,
+        underlying: settlementNote.underlying,
+        premium: settlementNote.premium,
+        qty: settlementNote.qty,
+      });
+    }
   }
 
-  const out = dates.map((d, idx) => ({ date: d, BuyAndHold: bh_value[idx], CoveredCall: cc_value[idx] }));
+  const out = dates.map((d, idx) => ({
+    date: d,
+    BuyAndHold: bh_value[idx],
+    CoveredCall: cc_value[idx],
+    settlement: null as null | {
+      pnl: number;
+      strike: number;
+      underlying: number;
+      premium: number;
+      qty: number;
+    },
+  }));
+
+  for (const s of settlements) {
+    out[s.index].settlement = {
+      pnl: s.pnl,
+      strike: s.strike,
+      underlying: s.underlying,
+      premium: s.premium,
+      qty: s.qty,
+    };
+  }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
   const ccReturn = (cc_value.at(-1)! / cc_value[0] - 1);
   return {
@@ -110,5 +175,6 @@ export function runBacktest(
     ivUsed: iv,
     bhShares: params.shares,
     ccShares: shares,
+    settlements: settlements.map(({ index: _index, ...rest }) => rest),
   };
 }
