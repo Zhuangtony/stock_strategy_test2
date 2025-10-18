@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -55,7 +55,54 @@ export default function Page() {
   }
 
   const chartData = result?.curve || [];
+  const chartLength = chartData.length;
   const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+
+  const MAX_VISIBLE_POINTS = 10;
+  const [visibleCount, setVisibleCount] = useState<number>(MAX_VISIBLE_POINTS);
+  const [startIndex, setStartIndex] = useState(0);
+
+  useEffect(() => {
+    if (chartLength > 0) {
+      const nextCount = Math.min(MAX_VISIBLE_POINTS, chartLength);
+      setVisibleCount(nextCount);
+      setStartIndex(0);
+    } else {
+      setVisibleCount(MAX_VISIBLE_POINTS);
+      setStartIndex(0);
+    }
+  }, [chartLength]);
+
+  useEffect(() => {
+    if (chartLength === 0) return;
+    const maxStart = Math.max(chartLength - visibleCount, 0);
+    if (startIndex > maxStart) {
+      setStartIndex(maxStart);
+    }
+  }, [chartLength, visibleCount, startIndex]);
+
+  const endIndex = chartLength > 0 ? Math.min(startIndex + visibleCount - 1, chartLength - 1) : -1;
+
+  const visibleData = useMemo(
+    () => (chartLength > 0 && endIndex >= startIndex ? chartData.slice(startIndex, endIndex + 1) : []),
+    [chartData, chartLength, endIndex, startIndex]
+  );
+
+  const visibleRangeLabel = useMemo(() => {
+    if (!visibleData.length) return '';
+    const first = visibleData[0]?.date;
+    const last = visibleData[visibleData.length - 1]?.date;
+    return first === last ? first : `${first} ~ ${last}`;
+  }, [visibleData]);
+
+  const visibleSettlements = useMemo(() => {
+    if (!visibleData.length) return [] as any[];
+    const dateSet = new Set(visibleData.map((point: any) => point.date));
+    return settlementPoints.filter((point: any) => dateSet.has(point.date));
+  }, [settlementPoints, visibleData]);
+
+  const maxStartIndex = Math.max(chartLength - visibleCount, 0);
+  const maxSelectableCount = Math.min(MAX_VISIBLE_POINTS, chartLength > 0 ? chartLength : MAX_VISIBLE_POINTS);
 
   const formatCurrency = (value: number, fractionDigits = 2) =>
     value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits });
@@ -169,15 +216,82 @@ export default function Page() {
           <>
             <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
+              <div className="mb-4 grid gap-4 md:grid-cols-2">
+                <label className="flex flex-col gap-2 text-xs md:text-sm">
+                  <span className="font-medium">顯示資料筆數：{visibleData.length}</span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={Math.max(1, maxSelectableCount)}
+                    value={visibleCount > 0 ? Math.min(visibleCount, maxSelectableCount || 1) : 1}
+                    disabled={chartLength <= 1}
+                    onChange={e => {
+                      const nextCount = Number(e.target.value);
+                      if (Number.isNaN(nextCount) || chartLength === 0) return;
+                      const clampedCount = Math.max(1, Math.min(MAX_VISIBLE_POINTS, Math.min(chartLength, nextCount)));
+                      const maxStart = Math.max(chartLength - clampedCount, 0);
+                      setVisibleCount(clampedCount);
+                      setStartIndex(prev => Math.min(prev, maxStart));
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-xs md:text-sm">
+                  <span className="font-medium">
+                    瀏覽位置：{visibleRangeLabel || '—'}
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, maxStartIndex)}
+                    value={Math.min(startIndex, Math.max(0, maxStartIndex))}
+                    disabled={chartLength === 0 || chartLength <= visibleCount}
+                    onChange={e => {
+                      const nextStart = Number(e.target.value);
+                      if (Number.isNaN(nextStart)) return;
+                      setStartIndex(Math.max(0, Math.min(nextStart, Math.max(0, maxStartIndex))));
+                    }}
+                  />
+                </label>
+              </div>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <LineChart data={visibleData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
-                    <Brush dataKey="date" height={24} travellerWidth={12} stroke="#94a3b8" />
+                    <Brush
+                      data={chartData}
+                      dataKey="date"
+                      height={24}
+                      travellerWidth={12}
+                      stroke="#94a3b8"
+                      startIndex={chartLength > 0 ? startIndex : undefined}
+                      endIndex={endIndex >= 0 ? endIndex : undefined}
+                      onChange={range => {
+                        if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
+                        if (chartLength === 0) return;
+                        let nextStart = Math.max(0, range.startIndex);
+                        let nextEnd = Math.min(chartLength - 1, range.endIndex);
+                        if (nextEnd < nextStart) {
+                          [nextStart, nextEnd] = [nextEnd, nextStart];
+                        }
+                        let requestedCount = nextEnd - nextStart + 1;
+                        if (requestedCount > MAX_VISIBLE_POINTS) {
+                          requestedCount = MAX_VISIBLE_POINTS;
+                          nextEnd = Math.min(chartLength - 1, nextStart + requestedCount - 1);
+                        }
+                        const nextCount = Math.max(1, requestedCount);
+                        const maxStart = Math.max(chartLength - nextCount, 0);
+                        if (nextStart > maxStart) {
+                          nextStart = maxStart;
+                          nextEnd = Math.min(chartLength - 1, nextStart + nextCount - 1);
+                        }
+                        setVisibleCount(nextCount);
+                        setStartIndex(nextStart);
+                      }}
+                    />
                     <Line
                       type="monotone"
                       dataKey="BuyAndHold"
@@ -192,7 +306,7 @@ export default function Page() {
                       strokeWidth={2}
                       stroke="#f97316"
                     />
-                    {settlementPoints.map((point: any, idx: number) => (
+                    {visibleSettlements.map((point: any, idx: number) => (
                       <ReferenceDot
                         key={`${point.date}-${idx}`}
                         x={point.date}
