@@ -778,6 +778,7 @@ export default function Page() {
                       <ReferenceLine
                         key={`roll-${point.date}-${idx}`}
                         x={point.date}
+                        yAxisId="value"
                         stroke="#6366f1"
                         strokeDasharray="4 2"
                         strokeOpacity={0.6}
