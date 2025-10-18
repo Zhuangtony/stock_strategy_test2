@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -11,6 +11,7 @@ import {
   Legend,
   CartesianGrid,
   ReferenceDot,
+  ReferenceLine,
   Brush,
   TooltipProps,
 } from 'recharts';
@@ -35,7 +36,6 @@ export default function Page() {
   const [initialCapital, setInitialCapital] = useState(0);
   const [shares, setShares] = useState(100);
   const [targetDelta, setTargetDelta] = useState(0.3);
-  const [callDeltaOverride, setCallDeltaOverride] = useState<number | null>(null);
   const [freq, setFreq] = useState<'weekly' | 'monthly'>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
   const [reinvestPremium, setReinvestPremium] = useState(true);
@@ -47,6 +47,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const r = 0.03;
   const q = 0.00;
@@ -95,13 +96,84 @@ export default function Page() {
 
   const chartData = useMemo(() => result?.curve ?? [], [result]);
   const chartLength = chartData.length;
-  const settlementPoints = useMemo(() => (result?.settlements || []).filter((s: any) => s.qty > 0), [result]);
+  const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
+  const rollPoints = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'roll'),
+    [settlementPoints],
+  );
+  const expirationSettlements = useMemo(
+    () => settlementPoints.filter((point: any) => point.type === 'expiry' && point.qty > 0),
+    [settlementPoints],
+  );
 
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
+
+  useEffect(() => {
+    if (!result) {
+      setIsFullscreen(false);
+    }
+  }, [result]);
+
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    let isPointerInside = false;
+
+    const preventWheelScroll = (event: WheelEvent) => {
+      if (!isPointerInside) return;
+      if (event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+    };
+
+    const handlePointerEnter = () => {
+      isPointerInside = true;
+      window.addEventListener('wheel', preventWheelScroll, { passive: false });
+    };
+
+    const handlePointerLeave = () => {
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+    };
+
+    container.addEventListener('pointerenter', handlePointerEnter);
+    container.addEventListener('pointerleave', handlePointerLeave);
+
+    return () => {
+      isPointerInside = false;
+      window.removeEventListener('wheel', preventWheelScroll);
+      container.removeEventListener('pointerenter', handlePointerEnter);
+      container.removeEventListener('pointerleave', handlePointerLeave);
+    };
+  }, [result, isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isFullscreen]);
 
   const visibleData = useMemo(() => {
     if (chartLength === 0) return [];
@@ -119,11 +191,17 @@ export default function Page() {
     return first === last ? first : `${first} ~ ${last}`;
   }, [visibleData]);
 
-  const visibleSettlements = useMemo(() => {
+  const visibleExpirations = useMemo(() => {
     if (!visibleData.length) return [] as any[];
     const dateSet = new Set(visibleData.map((point: any) => point.date));
-    return settlementPoints.filter((point: any) => dateSet.has(point.date));
-  }, [settlementPoints, visibleData]);
+    return expirationSettlements.filter((point: any) => dateSet.has(point.date));
+  }, [expirationSettlements, visibleData]);
+
+  const visibleRolls = useMemo(() => {
+    if (!visibleData.length) return [] as any[];
+    const dateSet = new Set(visibleData.map((point: any) => point.date));
+    return rollPoints.filter((point: any) => dateSet.has(point.date));
+  }, [rollPoints, visibleData]);
 
   const renderedData = useMemo(() => {
     const points: any[] = Array.isArray(visibleData) ? visibleData : [];
@@ -152,7 +230,10 @@ export default function Page() {
       sampled.push(lastPoint);
     }
 
-    const settlementDates = new Set(visibleSettlements.map((point: any) => point.date));
+    const settlementDates = new Set([
+      ...visibleExpirations.map((point: any) => point.date),
+      ...visibleRolls.map((point: any) => point.date),
+    ]);
     if (settlementDates.size > 0) {
       points.forEach(point => {
         if (settlementDates.has(point.date) && !sampled.some(item => item.date === point.date)) {
@@ -167,7 +248,7 @@ export default function Page() {
     });
 
     return sampled;
-  }, [pointDensity, visibleData, visibleSettlements]);
+  }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
   const formatCurrency = useCallback(
     (value: number, fractionDigits = 2) =>
@@ -179,6 +260,11 @@ export default function Page() {
   const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
     if (!active || !payload || payload.length === 0) return null;
     const settlement = (payload[0].payload as any)?.settlement;
+    const settlementTitle = settlement
+      ? settlement.type === 'roll'
+        ? 'Roll up & out'
+        : 'Covered Call 結算'
+      : null;
     return (
       <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
         <div className="mb-2 text-sm font-semibold">{label}</div>
@@ -206,14 +292,19 @@ export default function Page() {
             </div>
           ))}
         </div>
-        {settlement && settlement.qty > 0 && (
+        {settlement && settlementTitle && (
           <div className="mt-3 border-t pt-2">
-            <div className="font-semibold">Covered Call 結算</div>
+            <div className="font-semibold">{settlementTitle}</div>
             <div className="mt-1 space-y-1">
               <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
               <div>履約價：{settlement.strike.toFixed(2)}</div>
               <div>標的價格：{settlement.underlying.toFixed(2)}</div>
-              <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              {typeof settlement.qty === 'number' && settlement.qty > 0 && (
+                <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+              )}
+              {settlement.type === 'roll' && (
+                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+              )}
             </div>
           </div>
         )}
@@ -239,6 +330,7 @@ export default function Page() {
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (chartLength === 0) return;
+      if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
       const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
@@ -281,6 +373,13 @@ export default function Page() {
     },
     [brushRange, chartLength],
   );
+
+  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
 
   const summaryCards = useMemo(() => {
     if (!result) return [] as {
@@ -361,28 +460,6 @@ export default function Page() {
               <input type="range" min={0.1} max={0.6} step={0.01} value={targetDelta} onChange={e => setTargetDelta(Number(e.target.value))} />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">Call Delta 覆寫（選填）</div>
-              <input
-                type="number"
-                min={0.05}
-                max={0.95}
-                step={0.01}
-                className="w-full rounded-xl border p-2"
-                placeholder="例如 0.25"
-                value={callDeltaOverride ?? ''}
-                onChange={e => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    setCallDeltaOverride(null);
-                    return;
-                  }
-                  const parsed = Number(raw);
-                  setCallDeltaOverride(Number.isFinite(parsed) ? parsed : null);
-                }}
-              />
-              <div className="text-xs text-slate-500">留空則沿用上方 Delta 目標，數值越低代表賣更 OTM 的 Call。</div>
-            </label>
-            <label className="space-y-2">
               <div className="text-sm">到期頻率</div>
               <select className="w-full rounded-xl border p-2" value={freq} onChange={e => setFreq(e.target.value as any)}>
                 <option value="weekly">週選擇權</option>
@@ -426,26 +503,47 @@ export default function Page() {
 
         {result && (
           <>
-            <section className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
+            <section
+              className={`${
+                isFullscreen
+                  ? 'fixed inset-0 z-50 m-0 flex h-screen w-screen flex-col overflow-hidden bg-white p-4 shadow-xl md:p-8'
+                  : 'rounded-2xl border bg-white shadow-sm p-4 md:p-6 flex flex-col'
+              }`}
+            >
               <h2 className="font-semibold mb-4">資產曲線（USD）</h2>
-              <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-xs md:text-sm text-slate-600">
                 <div>
                   目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
                 </div>
-                <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
-                  <span>數據點密度</span>
-                  <select
-                    className="rounded-lg border px-2 py-1 text-xs md:text-sm"
-                    value={pointDensity}
-                    onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                  <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
+                    <span>數據點密度</span>
+                    <select
+                      className="rounded-lg border px-2 py-1 text-xs md:text-sm"
+                      value={pointDensity}
+                      onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                    >
+                      <option value="dense">高</option>
+                      <option value="normal">中</option>
+                      <option value="sparse">低</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreen(current => !current)}
+                    className="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 md:text-sm"
                   >
-                    <option value="dense">高</option>
-                    <option value="normal">中</option>
-                    <option value="sparse">低</option>
-                  </select>
-                </label>
+                    {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
+                  </button>
+                </div>
               </div>
-              <div className="h-80" onWheel={handleWheelZoom}>
+              <div
+                className={isFullscreen ? 'flex-1 min-h-0' : 'h-80'}
+                style={{ overscrollBehavior: 'contain' }}
+                ref={chartContainerRef}
+                onWheel={handleWheelZoom}
+                onMouseDown={handleMouseDown}
+              >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -454,7 +552,7 @@ export default function Page() {
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
                     <Brush
-                      dataKey="date"
+                      dataKey="CoveredCall"
                       data={chartData}
                       height={24}
                       travellerWidth={12}
@@ -462,7 +560,12 @@ export default function Page() {
                       startIndex={brushRange ? brushRange.startIndex : undefined}
                       endIndex={brushRange ? brushRange.endIndex : undefined}
                       onChange={handleBrushChange}
-                    />
+                    >
+                      <LineChart data={chartData}>
+                        <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                        <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                      </LineChart>
+                    </Brush>
                     <Line
                       type="monotone"
                       dataKey="BuyAndHold"
@@ -477,7 +580,22 @@ export default function Page() {
                       strokeWidth={2}
                       stroke="#f97316"
                     />
-                    {visibleSettlements.map((point: any, idx: number) => (
+                    {visibleRolls.map((point: any, idx: number) => (
+                      <ReferenceLine
+                        key={`roll-${point.date}-${idx}`}
+                        x={point.date}
+                        stroke="#6366f1"
+                        strokeDasharray="4 2"
+                        strokeOpacity={0.6}
+                        label={{
+                          value: 'Roll',
+                          position: 'top',
+                          fill: '#4338ca',
+                          fontSize: 11,
+                        }}
+                      />
+                    ))}
+                    {visibleExpirations.map((point: any, idx: number) => (
                       <ReferenceDot
                         key={`${point.date}-${idx}`}
                         x={point.date}
