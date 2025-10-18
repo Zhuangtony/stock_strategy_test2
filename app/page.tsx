@@ -239,7 +239,6 @@ export default function Page() {
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (chartLength === 0) return;
-      event.preventDefault();
 
       const baseRange = brushRange ?? { startIndex: 0, endIndex: chartLength - 1 };
       let startIdx = Math.min(baseRange.startIndex, baseRange.endIndex);
@@ -281,6 +280,18 @@ export default function Page() {
     },
     [brushRange, chartLength],
   );
+
+  const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
+  const suppressWheelDefault = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
 
   const summaryCards = useMemo(() => {
     if (!result) return [] as {
@@ -445,7 +456,13 @@ export default function Page() {
                   </select>
                 </label>
               </div>
-              <div className="h-80" onWheel={handleWheelZoom}>
+              <div
+                className="h-80"
+                style={{ overscrollBehavior: 'contain' }}
+                onWheel={handleWheelZoom}
+                onWheelCapture={suppressWheelDefault}
+                onMouseDown={handleMouseDown}
+              >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={renderedData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -454,7 +471,7 @@ export default function Page() {
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
                     <Brush
-                      dataKey="date"
+                      dataKey="CoveredCall"
                       data={chartData}
                       height={24}
                       travellerWidth={12}
@@ -462,7 +479,12 @@ export default function Page() {
                       startIndex={brushRange ? brushRange.startIndex : undefined}
                       endIndex={brushRange ? brushRange.endIndex : undefined}
                       onChange={handleBrushChange}
-                    />
+                    >
+                      <LineChart data={chartData}>
+                        <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                        <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                      </LineChart>
+                    </Brush>
                     <Line
                       type="monotone"
                       dataKey="BuyAndHold"
