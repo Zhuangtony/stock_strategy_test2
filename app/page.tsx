@@ -947,7 +947,7 @@ export default function Page() {
                 <h2 className="text-lg font-semibold text-slate-900">回測總結</h2>
                 <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
               </div>
-              <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
+              <div className="grid grid-cols-1 gap-4 text-sm [grid-auto-rows:1fr] sm:grid-cols-2 lg:grid-cols-4">
                 {summaryCards.map(card => (
                   <div
                     key={card.label}
