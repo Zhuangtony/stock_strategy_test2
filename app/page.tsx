@@ -75,15 +75,15 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: numbe
 };
 
 type SeriesConfig = {
-  key: 'buyAndHold' | 'coveredCall' | 'underlying' | 'callStrike';
+  key: string;
   label: string;
   color: string;
-  dataKey: 'BuyAndHold' | 'CoveredCall' | 'UnderlyingPrice' | 'CallStrike';
+  dataKey: string;
   axis: 'value' | 'price';
   strokeDasharray?: string;
 };
 
-const SERIES_CONFIG: readonly SeriesConfig[] = [
+const BASE_SERIES_CONFIG: readonly SeriesConfig[] = [
   { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
   { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
   { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
@@ -97,7 +97,22 @@ const SERIES_CONFIG: readonly SeriesConfig[] = [
   },
 ];
 
+const COMPARISON_SERIES_COLORS = ['#7c3aed', '#ec4899', '#22c55e', '#e11d48', '#0ea5e9', '#a855f7'] as const;
+
 type SeriesKey = SeriesConfig['key'];
+
+type ComparisonDeltaInput = {
+  id: string;
+  value: number;
+};
+
+type ComparisonResultEntry = {
+  id: string;
+  value: number;
+  result: ReturnType<typeof runBacktest> | null;
+};
+
+const createDeltaId = () => Math.random().toString(36).slice(2, 10);
 
 const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   const { cx, cy } = props as DotProps;
@@ -136,23 +151,29 @@ export default function Page() {
   const [dynamicContracts, setDynamicContracts] = useState(true);
   const [enableRoll, setEnableRoll] = useState(true);
   const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.7);
+  const [rollDaysBeforeExpiry, setRollDaysBeforeExpiry] = useState(0);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>({
-    buyAndHold: true,
-    coveredCall: true,
-    underlying: true,
-    callStrike: true,
-  });
+  const [comparisonDeltas, setComparisonDeltas] = useState<ComparisonDeltaInput[]>([]);
+  const [comparisonResults, setComparisonResults] = useState<ComparisonResultEntry[]>([]);
+  const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() =>
+    BASE_SERIES_CONFIG.reduce((acc, series) => {
+      acc[series.key] = true;
+      return acc;
+    }, {} as Record<SeriesKey, boolean>),
+  );
 
   const r = 0.03;
   const q = 0.00;
 
   const run = useCallback(async () => {
-    setBusy(true); setError(null); setResult(null);
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    setComparisonResults([]);
     try {
       const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
       if (payload.rows.length < 30) throw new Error('資料太少，請擴大日期範圍');
@@ -170,9 +191,32 @@ export default function Page() {
         dynamicContracts,
         enableRoll,
         rollDeltaThreshold,
+        rollDaysBeforeExpiry,
         earningsDates: payload.earningsDates,
       });
+      const extra = comparisonDeltas.map(deltaInput => ({
+        id: deltaInput.id,
+        value: deltaInput.value,
+        result: runBacktest(payload.rows, {
+          initialCapital,
+          shares,
+          r,
+          q,
+          targetDelta: deltaInput.value,
+          freq,
+          ivOverride,
+          reinvestPremium,
+          roundStrikeToInt,
+          skipEarningsWeek,
+          dynamicContracts,
+          enableRoll,
+          rollDeltaThreshold,
+          rollDaysBeforeExpiry,
+          earningsDates: payload.earningsDates,
+        }),
+      }));
       setResult(res);
+      setComparisonResults(extra);
     } catch (e: any) {
       setError(e.message || String(e));
     } finally { setBusy(false); }
@@ -183,6 +227,7 @@ export default function Page() {
     freq,
     initialCapital,
     ivOverride,
+    comparisonDeltas,
     r,
     q,
     reinvestPremium,
@@ -193,16 +238,83 @@ export default function Page() {
     targetDelta,
     ticker,
     rollDeltaThreshold,
+    rollDaysBeforeExpiry,
   ]);
 
   const toggleSeries = useCallback((key: SeriesKey) => {
     setSeriesVisibility(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  const handleAddComparisonDelta = useCallback(() => {
+    setComparisonDeltas(prev => {
+      const lastValue = prev.length > 0 ? prev[prev.length - 1].value : targetDelta;
+      const suggested = lastValue + 0.05;
+      const clamped = Math.max(0.1, Math.min(0.6, suggested));
+      const nextValue = Number(clamped.toFixed(2));
+      return [...prev, { id: createDeltaId(), value: nextValue }];
+    });
+  }, [targetDelta]);
+
+  const handleComparisonDeltaChange = useCallback((id: string, value: number) => {
+    const clamped = Math.max(0.1, Math.min(0.6, value));
+    setComparisonDeltas(prev => prev.map(item => (item.id === id ? { ...item, value: Number(clamped.toFixed(2)) } : item)));
+  }, []);
+
+  const handleRemoveComparisonDelta = useCallback((id: string) => {
+    setComparisonDeltas(prev => prev.filter(item => item.id !== id));
+  }, []);
+
+  const comparisonSeriesList = useMemo(
+    () =>
+      comparisonDeltas.map((delta, index) => {
+        const entry = comparisonResults.find(item => item.id === delta.id);
+        const normalized = delta.value.toFixed(2);
+        const slugBase = normalized.replace('.', 'p');
+        const slug = `${slugBase}_${delta.id}`;
+        const config: SeriesConfig = {
+          key: `coveredCall-${delta.id}`,
+          label: `Covered Call Δ${normalized}`,
+          color: COMPARISON_SERIES_COLORS[index % COMPARISON_SERIES_COLORS.length],
+          dataKey: `CoveredCall_${slug}`,
+          axis: 'value',
+          strokeDasharray: '5 3',
+        };
+        const curveSource = entry?.result?.curve;
+        return { config, curve: Array.isArray(curveSource) ? curveSource : [] };
+      }),
+    [comparisonDeltas, comparisonResults],
+  );
+
   const chartData = useMemo(() => {
     if (!Array.isArray(result?.curve)) return [] as any[];
-    return result.curve.map((point: any) => ({ ...point }));
-  }, [result]);
+    const base = result.curve.map((point: any) => ({ ...point }));
+    if (!comparisonSeriesList.length) return base;
+    comparisonSeriesList.forEach(series => {
+      const { curve, config } = series;
+      if (!Array.isArray(curve) || !curve.length) return;
+      for (let i = 0; i < base.length; i++) {
+        const value = curve[i]?.CoveredCall;
+        base[i][config.dataKey] = value ?? null;
+      }
+    });
+    return base;
+  }, [comparisonSeriesList, result]);
+
+  const seriesConfig = useMemo(() => {
+    const base = BASE_SERIES_CONFIG.map(series => {
+      if (series.key === 'coveredCall') {
+        const effectiveDelta = result?.effectiveTargetDelta;
+        const label =
+          typeof effectiveDelta === 'number'
+            ? `Covered Call Δ${effectiveDelta.toFixed(2)}`
+            : series.label;
+        return { ...series, label } as SeriesConfig;
+      }
+      return { ...series } as SeriesConfig;
+    });
+    const dynamic = comparisonSeriesList.map(series => series.config);
+    return [...base, ...dynamic];
+  }, [comparisonSeriesList, result?.effectiveTargetDelta]);
   const chartLength = chartData.length;
   const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
   const rollPoints = useMemo(
@@ -229,6 +341,43 @@ export default function Page() {
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
+
+  useEffect(() => {
+    setComparisonResults(prev => {
+      const map = new Map(prev.map(entry => [entry.id, entry]));
+      return comparisonDeltas.map(delta => {
+        const existing = map.get(delta.id);
+        if (!existing) {
+          return { id: delta.id, value: delta.value, result: null };
+        }
+        if (existing.value !== delta.value) {
+          return { ...existing, value: delta.value, result: null };
+        }
+        return existing;
+      });
+    });
+  }, [comparisonDeltas]);
+
+  useEffect(() => {
+    setSeriesVisibility(prev => {
+      const next = { ...prev } as Record<SeriesKey, boolean>;
+      let changed = false;
+      const keys = new Set(seriesConfig.map(series => series.key));
+      seriesConfig.forEach(series => {
+        if (!(series.key in next)) {
+          next[series.key] = true;
+          changed = true;
+        }
+      });
+      Object.keys(next).forEach(key => {
+        if (!keys.has(key)) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [seriesConfig]);
 
   useEffect(() => {
     const track = scrollerTrackRef.current;
@@ -859,6 +1008,76 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                 className="accent-indigo-500"
               />
             </label>
+            <div className="md:col-span-3 rounded-2xl border border-dashed border-slate-200/70 bg-white/60 p-4 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-700">比較 Delta 設定</div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    新增不同 Delta 值以在同一張圖上比較 Covered Call 策略。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddComparisonDelta}
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+                >
+                  Add
+                </button>
+              </div>
+              {comparisonDeltas.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-400">尚未新增比較 Delta。</p>
+              ) : (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {comparisonDeltas.map((delta, idx) => (
+                    <div
+                      key={delta.id}
+                      className="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white/80 p-3 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs font-medium text-slate-500">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-2 w-2 rounded-full"
+                            style={{ backgroundColor: COMPARISON_SERIES_COLORS[idx % COMPARISON_SERIES_COLORS.length] }}
+                          />
+                          <span>Δ {idx + 1}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveComparisonDelta(delta.id)}
+                          className="text-[11px] text-slate-400 transition hover:text-red-500"
+                        >
+                          移除
+                        </button>
+                      </div>
+                      <div className="text-sm font-semibold text-slate-700">目標 Delta：{delta.value.toFixed(2)}</div>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={0.6}
+                        step={0.01}
+                        value={delta.value}
+                        onChange={e => handleComparisonDeltaChange(delta.id, Number(e.target.value))}
+                        className="accent-violet-500"
+                      />
+                      <input
+                        type="number"
+                        min={0.1}
+                        max={0.6}
+                        step={0.01}
+                        value={delta.value}
+                        onChange={e => {
+                          const next = Number(e.target.value);
+                          if (!Number.isNaN(next)) {
+                            handleComparisonDeltaChange(delta.id, next);
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <label className="space-y-2">
               <div className="text-sm">換倉頻率</div>
               <select
@@ -925,7 +1144,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                   onChange={e => setEnableRoll(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Delta 觸價且 DTE &gt; 2 時 Roll up &amp; out</span>
+                <span>Delta 觸價時 Roll up &amp; out（可設定固定換倉日）</span>
               </label>
             </div>
             {enableRoll && (
@@ -957,8 +1176,38 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                     />
                   </div>
                 </div>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <span className="font-semibold text-indigo-900">
+                    預設換倉日：到期前 {rollDaysBeforeExpiry + 1} 天
+                  </span>
+                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
+                    <input
+                      type="range"
+                      min={0}
+                      max={4}
+                      step={1}
+                      value={rollDaysBeforeExpiry}
+                      onChange={e => setRollDaysBeforeExpiry(Number(e.target.value))}
+                      className="flex-1 accent-indigo-500"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={4}
+                      step={1}
+                      value={rollDaysBeforeExpiry}
+                      onChange={e => {
+                        const next = Number(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setRollDaysBeforeExpiry(Math.max(0, Math.min(4, Math.round(next))));
+                      }}
+                      className="w-24 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-right shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                  </div>
+                </div>
                 <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  當持有部位的 Delta 達到此設定值，且距離到期日尚有兩天以上時，系統將執行 Roll up &amp; out。
+                  Delta 達到閾值時會執行 Roll up &amp; out；此外亦會在距離到期 {rollDaysBeforeExpiry + 1} 天時依上述設定
+                  進行換倉，該流程與 Delta 判斷獨立。
                 </p>
               </div>
             )}
@@ -1014,8 +1263,8 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                   </div>
                 </div>
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 md:text-sm">
-                  {SERIES_CONFIG.map(series => {
-                    const active = seriesVisibility[series.key];
+                  {seriesConfig.map(series => {
+                    const active = seriesVisibility[series.key] ?? true;
                     return (
                       <button
                         key={series.key}
@@ -1076,7 +1325,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                         domain={['auto', 'auto']} // <--- 新增 domain
                       />
                       <Tooltip content={<CustomTooltip />} />
-                      {SERIES_CONFIG.map(series => (
+                      {seriesConfig.map(series => (
                         <Line
                           key={series.key}
                           type="monotone"
@@ -1087,7 +1336,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                           stroke={series.color}
                           name={series.label}
                           yAxisId={series.axis}
-                          hide={!seriesVisibility[series.key]}
+                          hide={seriesVisibility[series.key] === false}
                           strokeDasharray={series.strokeDasharray}
                           isAnimationActive={false}
                           connectNulls
