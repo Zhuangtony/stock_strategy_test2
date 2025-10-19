@@ -58,6 +58,11 @@ export async function GET(request: Request) {
   if (!Number.isFinite(startEpoch) || !Number.isFinite(endEpoch) || endEpoch <= startEpoch) {
     return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
   }
+  if (endTs < startTs) {
+    return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
+  }
+  const minEndTs = startTs + 86400; // ensure at least one full trading day window when range collapses
+  const periodEndTs = endTs === startTs ? minEndTs : endTs;
 
   const yahooUrl = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   yahooUrl.searchParams.set('period1', String(startEpoch));

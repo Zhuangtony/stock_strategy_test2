@@ -22,7 +22,7 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   const res = await fetch(u, { cache: 'no-store' });
   if (!res.ok) throw new Error(`API ${res.status}`);
   const json = await res.json();
-  if (!json?.rows?.length) throw new Error('沒�?資�?（檢?�代�??��?�?);
+  if (!json?.rows?.length) throw new Error('沒�?資�?（檢?�代�??��?�?);
   return {
     rows: json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[],
     earningsDates: Array.isArray(json.earningsDates) ? (json.earningsDates as string[]) : [],
@@ -87,10 +87,10 @@ type SeriesConfig = {
 const SERIES_CONFIG: readonly SeriesConfig[] = [
   { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
   { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
-  { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
+  { key: 'underlying', label: '標�??�價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
   {
     key: 'callStrike',
-    label: '賣出履約價',
+    label: '�?��履�???,
     color: '#16a34a',
     dataKey: 'CallStrike',
     axis: 'price',
@@ -156,7 +156,7 @@ export default function Page() {
     setBusy(true); setError(null); setResult(null);
     try {
       const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
-      if (payload.rows.length < 30) throw new Error('資�?太�?，�??�大?��??�?��?);
+      if (payload.rows.length < 30) throw new Error('資�?太�?，�??�大?��??�?��?);
       const res = runBacktest(payload.rows, {
         initialCapital,
         shares,
@@ -412,7 +412,7 @@ export default function Page() {
     const settlementTitle = settlement
       ? settlement.type === 'roll'
         ? 'Roll up & out'
-        : 'Covered Call 結算'
+        : 'Covered Call 結�?'
       : null;
     return (
       <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
@@ -448,24 +448,24 @@ export default function Page() {
           <div className="mt-3 border-t pt-2">
             <div className="font-semibold">{settlementTitle}</div>
             <div className="mt-1 space-y-1">
-              <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
-              <div>履約價：{settlement.strike.toFixed(2)}</div>
-              <div>標的價格：{settlement.underlying.toFixed(2)}</div>
+              <div>?�虧：{formatPnL(settlement.pnl)} USD</div>
+              <div>履�??��?{settlement.strike.toFixed(2)}</div>
+              <div>標�??�格：{settlement.underlying.toFixed(2)}</div>
               {typeof settlement.qty === 'number' && settlement.qty > 0 && (
-                <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+                <div>�?��權利?��?{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
               )}
               {typeof settlement.delta === 'number' && (
-                <div>Delta：Δ {settlement.delta.toFixed(2)}</div>
+                <div>Delta：�?{settlement.delta.toFixed(2)}</div>
               )}
               {settlement.type === 'roll' && (
-                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+                <div className="text-[11px] text-slate-500">已�??��??�至?��??��???/div>
               )}
             </div>
           </div>
         )}
         {typeof callDelta === 'number' && (
           <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
-            當前 Delta：Δ {callDelta.toFixed(2)}
+            ?��? Delta：�?{callDelta.toFixed(2)}
           </div>
         )}
       </div>
@@ -532,39 +532,31 @@ export default function Page() {
     }
   }, []);
 
-  const summaryCards = useMemo((): SummaryCard[] => {
+  const summaryCards = useMemo<SummaryCard[]>(() => {
     if (!result) return [];
-    const cards: SummaryCard[] = [
+    return [
       {
-        label: '估�?歷史波�?（HV，年?��?',
+        label: '估�?歷史波�?（HV，年?��?',
         value: `${(result.hv * 100).toFixed(1)}%`,
       },
       {
-        label: '使用 IV（年?��?',
+        label: '使用 IV（年?��?',
         value: `${(result.ivUsed * 100).toFixed(1)}%`,
       },
       {
-        label: 'Call Delta ?��?',
+        label: 'Call Delta ?��?',
         value: result.effectiveTargetDelta != null ? `? ${result.effectiveTargetDelta.toFixed(2)}` : '? --',
       },
       {
-        label: 'Roll Delta ?��?,
+        label: 'Roll Delta ?��?,
         value: enableRoll
           ? result.rollDeltaTrigger != null
             ? `? ${result.rollDeltaTrigger.toFixed(2)}`
             : `? ${rollDeltaThreshold.toFixed(2)}`
-          : '?��???,
+          : '?��???,
       },
       {
-        label: 'Roll Delta 門檻',
-        value: enableRoll
-          ? result.rollDeltaTrigger != null
-            ? `Δ ${result.rollDeltaTrigger.toFixed(2)}`
-            : `Δ ${rollDeltaThreshold.toFixed(2)}`
-          : '未啟用',
-      },
-      {
-        label: 'Buy&Hold 總報酬',
+        label: 'Buy&Hold 總報??,
         value: `${(result.bhReturn * 100).toFixed(1)}%`,
       },
       {
@@ -572,21 +564,19 @@ export default function Page() {
         value: `${(result.ccReturn * 100).toFixed(1)}%`,
       },
       {
-        label: 'Buy&Hold ?�後�??�股??,
+        label: 'Buy&Hold ?�後�??�股??,
         value: result.bhShares.toLocaleString(),
       },
       {
-        label: 'Covered Call ?�後�??�股??,
+        label: 'Covered Call ?�後�??�股??,
         value: result.ccShares.toLocaleString(),
       },
       {
-        label: 'Covered Call ?��?',
+        label: 'Covered Call ?��?',
         value: `${((result.ccWinRate ?? 0) * 100).toFixed(1)}%`,
-        footnote: `${result.ccSettlementCount ?? 0} 次�?算`,
+        footnote: `${result.ccSettlementCount ?? 0} 次�?算`,
       },
-    ];
-
-    return cards;
+    ] satisfies SummaryCard[];
   }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
@@ -595,28 +585,28 @@ export default function Page() {
         <header className="flex flex-col gap-3 border-b border-slate-200/80 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Covered Call Lab</p>
-            <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">Covered Call 策略回測器</h1>
+            <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">Covered Call 策略?�測??/h1>
           </div>
-          <div className="text-sm text-slate-500">資料來源：Yahoo Finance（經由伺服器端代理）</div>
+          <div className="text-sm text-slate-500">資�?來�?：Yahoo Finance（�??�伺?�器端代?��?</div>
         </header>
 
         <section className={`${panelClass} space-y-6 p-6 md:p-8`}>
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold text-slate-900">參數設定</h2>
+            <h2 className="text-lg font-semibold text-slate-900">?�數設�?</h2>
             <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Simulation Inputs</span>
           </div>
           <div className="grid gap-5 md:grid-cols-3">
             <label className="space-y-2">
-              <div className="text-sm">股票代碼（美股）</div>
+              <div className="text-sm">?�票�?��（�??��?</div>
               <input
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={ticker}
                 onChange={e => setTicker(e.target.value.toUpperCase())}
-                placeholder="如 AAPL、TSLA"
+                placeholder="�?AAPL?�TSLA"
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">開始日期</div>
+              <div className="text-sm">?��??��?</div>
               <input
                 type="date"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -625,7 +615,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">結束日期</div>
+              <div className="text-sm">結�??��?</div>
               <input
                 type="date"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -634,7 +624,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">初始現金（USD，可為0）</div>
+              <div className="text-sm">?��??��?（USD，可??�?/div>
               <input
                 type="number"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -643,7 +633,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">持有股數（covered shares）</div>
+              <div className="text-sm">?��??�數（covered shares�?/div>
               <input
                 type="number"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -652,7 +642,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">標的 Delta 目標：{targetDelta.toFixed(2)}</div>
+              <div className="text-sm">標�? Delta ?��?：{targetDelta.toFixed(2)}</div>
               <input
                 type="range"
                 min={0.1}
@@ -664,23 +654,23 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">到期頻率</div>
+              <div className="text-sm">?��??��?</div>
               <select
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={freq}
                 onChange={e => setFreq(e.target.value as any)}
               >
-                <option value="weekly">週選擇權</option>
-                <option value="monthly">月選擇權</option>
+                <option value="weekly">?�選?��?</option>
+                <option value="monthly">?�選?��?</option>
               </select>
             </label>
             <label className="space-y-2">
-              <div className="text-sm">覆寫 IV（年化，選填）</div>
+              <div className="text-sm">覆寫 IV（年?��??�填�?/div>
               <input
                 type="number"
                 step="0.01"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                placeholder="例如 0.35"
+                placeholder="例�? 0.35"
                 value={ivOverride ?? ''}
                 onChange={e => setIvOverride(e.target.value === '' ? null : Number(e.target.value))}
               />
@@ -692,7 +682,7 @@ export default function Page() {
                 onChange={e => setReinvestPremium(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               />
-              <span className="text-sm">權利金再投入增持股票</span>
+              <span className="text-sm">權利?��??�入增�??�票</span>
             </label>
             <div className="grid gap-3 text-sm md:col-span-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
@@ -702,7 +692,7 @@ export default function Page() {
                   onChange={e => setRoundStrikeToInt(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Call 履約價取整數</span>
+                <span>Call 履�??��??�數</span>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
                 <input
@@ -711,7 +701,7 @@ export default function Page() {
                   onChange={e => setSkipEarningsWeek(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>避開財報週（不賣 Call）</span>
+                <span>?��?財報?��?不賣 Call�?/span>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
                 <input
@@ -720,7 +710,7 @@ export default function Page() {
                   onChange={e => setDynamicContracts(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>股數每滿 100 股自動增加張數</span>
+                <span>?�數每滿 100 ?�自?��??�張??/span>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
                 <input
@@ -729,13 +719,13 @@ export default function Page() {
                   onChange={e => setEnableRoll(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Delta 達閾值且距到期 &gt; 2 天時 Roll up &amp; out</span>
+                <span>Delta ?�閾?��?距到??&gt; 2 天�? Roll up &amp; out</span>
               </label>
             </div>
             {enableRoll && (
               <div className="md:col-span-3 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 text-xs md:text-sm">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <span className="font-semibold text-indigo-900">Roll Delta 門檻：Δ {rollDeltaThreshold.toFixed(2)}</span>
+                  <span className="font-semibold text-indigo-900">Roll Delta ?�檻�?? {rollDeltaThreshold.toFixed(2)}</span>
                   <div className="flex flex-1 items-center gap-3 md:max-w-md">
                     <input
                       type="range"
@@ -762,8 +752,7 @@ export default function Page() {
                   </div>
                 </div>
                 <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  當持有部位的 Delta 達到或超過此閾值，且距離到期超過兩個交易日時，系統會提前 Roll up &amp; out。
-                </p>
+                  ?��??�部位�? Delta ?�到?��??�此?�值�?且�??�到?��??�兩?�交?�日?��?系統?��???Roll up &amp; out??                </p>
               </div>
             )}
             <div className="md:col-span-3">
@@ -772,7 +761,7 @@ export default function Page() {
                 disabled={busy}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {busy ? '計算中…' : '開始回測'}
+                {busy ? '計�?中�? : '?��??�測'}
               </button>
             </div>
             {error && <div className="md:col-span-3 text-red-600 text-sm">{error}</div>}
@@ -789,24 +778,23 @@ export default function Page() {
               }`}
             >
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">資產曲線（USD）</h2>
+                <h2 className="text-lg font-semibold text-slate-900">資產?��?（USD�?/h2>
                 <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Performance</span>
               </div>
               <div className="mb-4 flex flex-col gap-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between md:text-sm">
                 <div>
-                  目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
-                </div>
+                  ?��?顯示?�?��?{visibleRangeLabel || '?�部資�?'}?�可?��?下方?�曳?��??�?��??�選?�整段�??��??�自?�顯示全?��??��???                </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
                   <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
-                    <span>數據點密度</span>
+                    <span>?��?點�?�?/span>
                     <select
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 md:text-sm"
                       value={pointDensity}
                       onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
                     >
-                      <option value="dense">高</option>
-                      <option value="normal">中</option>
-                      <option value="sparse">低</option>
+                      <option value="dense">�?/option>
+                      <option value="normal">�?/option>
+                      <option value="sparse">�?/option>
                     </select>
                   </label>
                   <button
@@ -814,7 +802,7 @@ export default function Page() {
                     onClick={() => setIsFullscreen(current => !current)}
                     className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 md:text-sm"
                   >
-                    {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
+                    {isFullscreen ? '?�?�全?��? (Esc)' : '?�螢幕檢�?}
                   </button>
                 </div>
               </div>
@@ -922,7 +910,7 @@ export default function Page() {
 
             <section className={`${panelClass} p-6 md:p-8`}>
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">回測摘要</h2>
+                <h2 className="text-lg font-semibold text-slate-900">?�測?��?</h2>
                 <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
@@ -943,13 +931,13 @@ export default function Page() {
 
         {!result && (
           <section className={`${panelClass} p-6 md:p-8`}>
-            <h2 className="font-semibold mb-3">如何操作？</h2>
-            <p className="text-sm leading-7">輸入美股代碼（如 AAPL、TSLA）、日期區間與參數，點擊「開始回測」。系統會透過伺服器端 API 代理 Yahoo，計算買入持有與不同週期的 covered call 策略資產曲線並比較。</p>
-            <p className="text-sm leading-7">可調整 Delta 目標（常見 0.2–0.4）、週/月選擇權，以及是否將權利金再投入。若想更貼近實務市場報價，可覆寫年化隱含波動（IV）。</p>
+            <h2 className="font-semibold mb-3">如�??��?�?/h2>
+            <p className="text-sm leading-7">輸入美股�?��（�? AAPL?�TSLA）、日?��??��??�數，�??�「�?始�?測」。系統�??��?伺�??�端 API �?? Yahoo，�?算買?��??��?不�??��???covered call 策略資產?��?並�?較�?/p>
+            <p className="text-sm leading-7">?�調??Delta ?��?（常�?0.2??.4）、�??�選?��?，以?�是?��?權利?��??�入?�若?�更貼�?實�?市場?�價，可覆寫年�??�含波�?（IV）�?/p>
           </section>
         )}
 
-        <footer className="pt-8 text-center text-xs text-slate-400">此工具僅供教育研究，不構成投資建議。</footer>
+        <footer className="pt-8 text-center text-xs text-slate-400">此工?��?供�??��?究�?不�??��?資建議�?/footer>
       </div>
     </main>
   );
