@@ -315,6 +315,7 @@ export default function Page() {
     const dynamic = comparisonSeriesList.map(series => series.config);
     return [...base, ...dynamic];
   }, [comparisonSeriesList, result?.effectiveTargetDelta]);
+  const canDownloadCsv = useMemo(() => Array.isArray(result?.curve) && result.curve.length > 0, [result]);
   const chartLength = chartData.length;
   const settlementPoints = useMemo(() => Array.isArray(result?.settlements) ? result.settlements : [], [result]);
   const rollPoints = useMemo(
@@ -819,6 +820,91 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
     [applyPanFromPosition, scrollerMetrics],
   );
 
+  const handleDownloadCsv = useCallback(() => {
+    if (!Array.isArray(result?.curve) || result.curve.length === 0) return;
+
+    const serialize = (value: string | number | null | undefined) => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return '';
+        return String(value);
+      }
+      const str = String(value);
+      if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const baseRows = result.curve;
+    const comparisonColumns = comparisonResults
+      .filter(entry => Array.isArray(entry.result?.curve) && entry.result!.curve.length > 0)
+      .map(entry => {
+        const label = `Covered Call Value (Δ${entry.value.toFixed(2)})`;
+        const map = new Map<string, number | null>();
+        entry.result!.curve.forEach((point: any) => {
+          const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
+          map.set(point.date, value);
+        });
+        return { label, map };
+      });
+
+    const headers = [
+      'Date',
+      'Buy & Hold Value',
+      'Covered Call Value',
+      'Underlying Price',
+      'Call Strike',
+      'Call Delta',
+      'Settlement Type',
+      'Settlement PnL',
+      'Settlement Strike',
+      'Settlement Underlying',
+      'Settlement Premium',
+      'Settlement Qty',
+      ...comparisonColumns.map(col => col.label),
+    ];
+
+    const rows = [headers.map(serialize).join(',')];
+
+    for (const point of baseRows as any[]) {
+      const settlement = point.settlement ?? null;
+      const rowValues: (string | number | null | undefined)[] = [
+        point.date,
+        typeof point.BuyAndHold === 'number' ? point.BuyAndHold : point.BuyAndHold ?? null,
+        typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null,
+        typeof point.UnderlyingPrice === 'number' ? point.UnderlyingPrice : point.UnderlyingPrice ?? null,
+        typeof point.CallStrike === 'number' ? point.CallStrike : point.CallStrike ?? null,
+        typeof point.CallDelta === 'number' ? point.CallDelta : point.CallDelta ?? null,
+        settlement?.type ?? null,
+        typeof settlement?.pnl === 'number' ? settlement.pnl : settlement?.pnl ?? null,
+        typeof settlement?.strike === 'number' ? settlement.strike : settlement?.strike ?? null,
+        typeof settlement?.underlying === 'number' ? settlement.underlying : settlement?.underlying ?? null,
+        typeof settlement?.premium === 'number' ? settlement.premium : settlement?.premium ?? null,
+        typeof settlement?.qty === 'number' ? settlement.qty : settlement?.qty ?? null,
+      ];
+
+      comparisonColumns.forEach(col => {
+        const value = col.map.get(point.date);
+        rowValues.push(typeof value === 'number' ? value : value ?? null);
+      });
+
+      rows.push(rowValues.map(serialize).join(','));
+    }
+
+    const csv = rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const filename = `${ticker.trim() || 'backtest'}_${start}_${end}_results.csv`;
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [comparisonResults, end, result, start, ticker]);
+
   useEffect(() => {
     if (!scrollerMetrics.hasWindow) {
       stopScrollerDrag(null);
@@ -1253,6 +1339,14 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                         <option value="sparse">疏</option>
                       </select>
                     </label>
+                    <button
+                      type="button"
+                      onClick={handleDownloadCsv}
+                      disabled={!canDownloadCsv}
+                      className="inline-flex items-center justify-center rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 shadow-sm transition hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                    >
+                      下載 CSV
+                    </button>
                     <button
                       type="button"
                       onClick={() => setIsFullscreen(current => !current)}
