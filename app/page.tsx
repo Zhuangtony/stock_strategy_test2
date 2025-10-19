@@ -10,7 +10,6 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   ReferenceLine,
-  Brush,
   TooltipProps,
 } from 'recharts';
 import type { DotProps, LineProps } from 'recharts';
@@ -217,10 +216,40 @@ export default function Page() {
 
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollerTrackRef = useRef<HTMLDivElement | null>(null);
+  const [scrollerWidth, setScrollerWidth] = useState(0);
+  const scrollerDragState = useRef<{ pointerId: number | null; offset: number; active: boolean; element: HTMLElement | null }>({
+    pointerId: null,
+    offset: 0,
+    active: false,
+    element: null,
+  });
+  const [isScrollerDragging, setIsScrollerDragging] = useState(false);
 
   useEffect(() => {
     setBrushRange(null);
   }, [chartLength]);
+
+  useEffect(() => {
+    const track = scrollerTrackRef.current;
+    if (!track) return;
+
+    const updateWidth = () => {
+      const rect = track.getBoundingClientRect();
+      setScrollerWidth(rect.width);
+    };
+
+    updateWidth();
+
+    const observer = new ResizeObserver(entries => {
+      if (!entries.length) return;
+      const entry = entries[0];
+      setScrollerWidth(entry.contentRect.width);
+    });
+    observer.observe(track);
+
+    return () => observer.disconnect();
+  }, [chartLength, isFullscreen]);
 
   useEffect(() => {
     setBrushRange(current => {
@@ -323,13 +352,40 @@ export default function Page() {
     return { startIndex: startIdx, endIndex: endIdx };
   }, [brushRange, chartLength]);
 
-  const brushStartIndex = activeBrushRange.startIndex;
-  const brushEndIndex = activeBrushRange.endIndex;
+  const scrollerMetrics = useMemo(() => {
+    const fallback = {
+      hasWindow: false,
+      thumbWidth: scrollerWidth,
+      thumbPosition: 0,
+      maxPosition: 0,
+      windowSize: chartLength > 0 ? chartLength : 0,
+      panRange: 0,
+    };
 
-  const brushUpdateId = useMemo(
-    () => `${chartLength}-${brushStartIndex}-${brushEndIndex}`,
-    [chartLength, brushStartIndex, brushEndIndex],
-  );
+    if (chartLength === 0 || scrollerWidth <= 0) {
+      return fallback;
+    }
+
+    const windowSize = Math.max(1, activeBrushRange.endIndex - activeBrushRange.startIndex + 1);
+    if (windowSize >= chartLength) {
+      return { ...fallback, thumbWidth: scrollerWidth, windowSize: chartLength };
+    }
+
+    const thumbWidth = Math.min(scrollerWidth, Math.max(24, (windowSize / chartLength) * scrollerWidth));
+    const maxPosition = Math.max(0, scrollerWidth - thumbWidth);
+    const panRange = Math.max(1, chartLength - windowSize);
+    const ratio = panRange === 0 || maxPosition === 0 ? 0 : activeBrushRange.startIndex / panRange;
+    const thumbPosition = maxPosition * ratio;
+
+    return {
+      hasWindow: true,
+      thumbWidth,
+      thumbPosition,
+      maxPosition,
+      windowSize,
+      panRange,
+    };
+  }, [activeBrushRange, chartLength, scrollerWidth]);
 
   const visibleRangeLabel = useMemo(() => {
     if (!visibleData.length) return '';
@@ -400,14 +456,6 @@ export default function Page() {
       isFullscreen
         ? { top: 48, right: 96, bottom: 96, left: 96 }
         : { top: 48, right: 80, bottom: 88, left: 80 },
-    [isFullscreen],
-  );
-
-  const brushAppearance = useMemo(
-    () =>
-      isFullscreen
-        ? { height: 32, travellerWidth: 14 }
-        : { height: 28, travellerWidth: 12 },
     [isFullscreen],
   );
 
@@ -490,21 +538,133 @@ export default function Page() {
     );
   };
 
-  const handleBrushChange = useCallback(
-    (range: any) => {
-      if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
-      if (chartLength === 0) return;
-      const startIdx = Math.max(0, Math.min(chartLength - 1, Math.round(range.startIndex)));
-      const endIdx = Math.max(0, Math.min(chartLength - 1, Math.round(range.endIndex)));
-      const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-      if (lo === 0 && hi === chartLength - 1) {
-        setBrushRange(null);
-        return;
+  const applyPanFromPosition = useCallback(
+    (positionPx: number) => {
+      if (!scrollerMetrics.hasWindow) {
+        return { applied: false, thumbPosition: 0 };
       }
-      setBrushRange({ startIndex: lo, endIndex: hi });
+
+      const clamped = Math.max(0, Math.min(scrollerMetrics.maxPosition, positionPx));
+      const effectiveMax = scrollerMetrics.maxPosition <= 0 ? 0 : scrollerMetrics.maxPosition;
+      const ratio = effectiveMax === 0 ? 0 : clamped / effectiveMax;
+      const tentativeStart = Math.round(ratio * scrollerMetrics.panRange);
+      const maxStart = Math.max(0, chartLength - scrollerMetrics.windowSize);
+      const startIndex = Math.max(0, Math.min(maxStart, tentativeStart));
+      const endIndex = Math.min(chartLength - 1, startIndex + scrollerMetrics.windowSize - 1);
+
+      if (startIndex <= 0 && endIndex >= chartLength - 1) {
+        setBrushRange(null);
+      } else {
+        setBrushRange({ startIndex, endIndex });
+      }
+
+      return { applied: true, thumbPosition: clamped };
     },
-    [chartLength],
+    [chartLength, scrollerMetrics],
   );
+
+  const handleScrollerPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const state = scrollerDragState.current;
+      if (!state.active || (state.pointerId != null && state.pointerId !== event.pointerId)) return;
+      const track = scrollerTrackRef.current;
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+      const positionPx = event.clientX - rect.left - state.offset;
+      applyPanFromPosition(positionPx);
+    },
+    [applyPanFromPosition],
+  );
+
+  const stopScrollerDrag = useCallback((pointerId?: number | null) => {
+    const state = scrollerDragState.current;
+    if (!state.active) return;
+    if (pointerId != null && state.pointerId != null && state.pointerId !== pointerId) {
+      return;
+    }
+    if (state.pointerId != null) {
+      try {
+        state.element?.releasePointerCapture?.(state.pointerId);
+      } catch {
+        // ignore pointer capture release errors
+      }
+    }
+    scrollerDragState.current = { pointerId: null, offset: 0, active: false, element: null };
+    setIsScrollerDragging(false);
+  }, []);
+
+  const handleScrollerPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      stopScrollerDrag(event.pointerId);
+    },
+    [stopScrollerDrag],
+  );
+
+  const handleScrollerPointerCancel = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      stopScrollerDrag(event.pointerId);
+    },
+    [stopScrollerDrag],
+  );
+
+  const handleThumbPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!scrollerMetrics.hasWindow) return;
+      const track = scrollerTrackRef.current;
+      if (!track) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = track.getBoundingClientRect();
+      scrollerDragState.current = {
+        pointerId: event.pointerId,
+        offset: event.clientX - (rect.left + scrollerMetrics.thumbPosition),
+        active: true,
+        element: event.currentTarget,
+      };
+      setIsScrollerDragging(true);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore pointer capture errors (e.g., unsupported environments)
+      }
+    },
+    [scrollerMetrics],
+  );
+
+  const handleTrackPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!scrollerMetrics.hasWindow) return;
+      const track = scrollerTrackRef.current;
+      if (!track) return;
+      event.preventDefault();
+      const rect = track.getBoundingClientRect();
+      const desiredPosition = event.clientX - rect.left - scrollerMetrics.thumbWidth / 2;
+      const result = applyPanFromPosition(desiredPosition);
+      if (!result.applied) return;
+      scrollerDragState.current = {
+        pointerId: event.pointerId,
+        offset: event.clientX - (rect.left + result.thumbPosition),
+        active: true,
+        element: event.currentTarget,
+      };
+      setIsScrollerDragging(true);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore pointer capture errors
+      }
+    },
+    [applyPanFromPosition, scrollerMetrics],
+  );
+
+  useEffect(() => {
+    if (!scrollerMetrics.hasWindow) {
+      stopScrollerDrag(null);
+    }
+  }, [scrollerMetrics.hasWindow, stopScrollerDrag]);
 
   const handleWheelZoom = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -802,9 +962,7 @@ export default function Page() {
                   <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Performance</span>
                 </div>
                 <div className="mb-4 flex flex-col gap-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between md:text-sm">
-                  <div>
-                    目前顯示範圍：{visibleRangeLabel || '全部資料'}。可拖曳下方 Brush 調整範圍，或滾動滑鼠縮放。
-                  </div>
+                  <div>目前顯示範圍：{visibleRangeLabel || '全部資料'}。使用下方水平滾動條移動區段，搭配滑鼠滾輪縮放。</div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
                     <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
                       <span>圖表點密度</span>
@@ -890,24 +1048,6 @@ export default function Page() {
                         domain={['auto', 'auto']} // <--- 新增 domain
                       />
                       <Tooltip content={<CustomTooltip />} />
-                      <Brush
-                        key={brushUpdateId}
-                        dataKey="CoveredCall"
-                        data={chartData}
-                        height={brushAppearance.height}
-                        travellerWidth={brushAppearance.travellerWidth}
-                        stroke="#94a3b8"
-                        startIndex={brushStartIndex}
-                        endIndex={brushEndIndex}
-                        updateId={brushUpdateId}
-                        onChange={handleBrushChange}
-                      >
-                        <LineChart data={chartData}>
-                          {/* 👇 為這兩條 Line 加上 yAxisId="value" */}
-                          <Line yAxisId="value" type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
-                          <Line yAxisId="value" type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
-                        </LineChart>
-                      </Brush>
                       {SERIES_CONFIG.map(series => (
                         <Line
                           key={series.key}
@@ -938,6 +1078,34 @@ export default function Page() {
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
+                  <div className="mt-4">
+                    <div
+                      ref={scrollerTrackRef}
+                      className="relative h-3 w-full select-none rounded-full bg-slate-200/70 shadow-inner shadow-slate-300/40 touch-none cursor-pointer"
+                      onPointerDown={handleTrackPointerDown}
+                      onPointerMove={handleScrollerPointerMove}
+                      onPointerUp={handleScrollerPointerUp}
+                      onPointerCancel={handleScrollerPointerCancel}
+                    >
+                      {scrollerMetrics.hasWindow ? (
+                        <div
+                          className={`absolute top-0 h-full rounded-full bg-indigo-400/80 transition-[background-color] duration-150 hover:bg-indigo-400 touch-none ${
+                            isScrollerDragging ? 'cursor-grabbing' : 'cursor-grab'
+                          }`}
+                          style={{
+                            width: `${scrollerMetrics.thumbWidth}px`,
+                            transform: `translateX(${scrollerMetrics.thumbPosition}px)`,
+                          }}
+                          onPointerDown={handleThumbPointerDown}
+                          onPointerMove={handleScrollerPointerMove}
+                          onPointerUp={handleScrollerPointerUp}
+                          onPointerCancel={handleScrollerPointerCancel}
+                        />
+                      ) : (
+                        <div className="absolute top-0 h-full w-full rounded-full bg-slate-300/60" />
+                      )}
+                    </div>
+                  </div>
                 </div>
               </ChartErrorBoundary>
             </section>
