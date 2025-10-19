@@ -55,18 +55,17 @@ export async function GET(request: Request) {
 
   const startEpoch = Math.floor(new Date(start).getTime() / 1000);
   const endEpoch = Math.floor(new Date(end).getTime() / 1000);
-  if (!Number.isFinite(startEpoch) || !Number.isFinite(endEpoch) || endEpoch <= startEpoch) {
+  if (!Number.isFinite(startEpoch) || !Number.isFinite(endEpoch)) {
     return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
   }
-  if (endTs < startTs) {
+  if (endEpoch < startEpoch) {
     return NextResponse.json({ error: 'Invalid time range' }, { status: 400 });
   }
-  const minEndTs = startTs + 86400; // ensure at least one full trading day window when range collapses
-  const periodEndTs = endTs === startTs ? minEndTs : endTs;
-
+  const minEndEpoch = startEpoch + 86400; // ensure at least one day of data is requested
+  const periodEndEpoch = endEpoch === startEpoch ? minEndEpoch : endEpoch;
   const yahooUrl = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
   yahooUrl.searchParams.set('period1', String(startEpoch));
-  yahooUrl.searchParams.set('period2', String(endEpoch));
+  yahooUrl.searchParams.set('period2', String(periodEndEpoch));
   yahooUrl.searchParams.set('interval', '1d');
   yahooUrl.searchParams.set('includePrePost', 'false');
   yahooUrl.searchParams.set('events', 'div,splits,earnings');
