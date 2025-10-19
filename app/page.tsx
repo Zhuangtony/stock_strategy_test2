@@ -851,16 +851,24 @@ export default function Page() {
                   onMouseDown={handleMouseDown}
                 >
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
+                    {/* 👇 調整左右 margin 以容納 Y 軸寬度，並增加 bottom margin */}
+                    <LineChart data={renderedData} margin={{ top: 48, right: 80, bottom: 5, left: 80 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
                       <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
-                      <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
+                      <YAxis
+                        yAxisId="value"
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={formatValueTick}
+                        width={80}
+                        domain={['auto', 'auto']} // <--- 新增 domain
+                      />
                       <YAxis
                         yAxisId="price"
                         orientation="right"
                         tick={{ fontSize: 12 }}
                         tickFormatter={formatPriceTick}
                         width={72}
+                        domain={['auto', 'auto']} // <--- 新增 domain
                       />
                       <Tooltip content={<CustomTooltip />} />
                       <Brush
@@ -876,6 +884,7 @@ export default function Page() {
                         onChange={handleBrushChange}
                       >
                         <LineChart data={chartData}>
+                          {/* 👇 為這兩條 Line 加上 yAxisId="value" */}
                           <Line yAxisId="value" type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
                           <Line yAxisId="value" type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
                         </LineChart>
