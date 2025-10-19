@@ -1144,7 +1144,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                   onChange={e => setEnableRoll(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Delta 觸價或距離到期設定天數時 Roll up &amp; out</span>
+                <span>Delta 觸價時 Roll up &amp; out（可設定固定換倉日）</span>
               </label>
             </div>
             {enableRoll && (
@@ -1178,7 +1178,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                 </div>
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <span className="font-semibold text-indigo-900">
-                    固定提前 Roll：到期前 {rollDaysBeforeExpiry + 1} 天
+                    預設換倉日：到期前 {rollDaysBeforeExpiry + 1} 天
                   </span>
                   <div className="flex flex-1 items-center gap-3 md:max-w-md">
                     <input
@@ -1206,7 +1206,8 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                   </div>
                 </div>
                 <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  當持有部位的 Delta 達到此設定值，或進入上述固定提前天數時，系統將執行 Roll up &amp; out。
+                  Delta 達到閾值時會執行 Roll up &amp; out；此外亦會在距離到期 {rollDaysBeforeExpiry + 1} 天時依上述設定
+                  進行換倉，該流程與 Delta 判斷獨立。
                 </p>
               </div>
             )}
