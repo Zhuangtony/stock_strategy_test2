@@ -757,6 +757,24 @@ export default function Page() {
     ] satisfies SummaryCard[];
   }, [enableRoll, result, rollDeltaThreshold]);
 
+  const summaryCardsWithRoll = useMemo<SummaryCard[]>(() => {
+    if (!result) return summaryCards;
+    const cards = [...summaryCards];
+    const rollEventsCount = Array.isArray(result.rollEvents) ? result.rollEvents.length : 0;
+    const rollCard: SummaryCard = enableRoll
+      ? {
+          label: 'Roll up & out 次數',
+          value: rollEventsCount.toLocaleString(),
+          footnote: rollEventsCount > 0 ? `${rollEventsCount.toLocaleString()} 次觸發` : '尚未觸發',
+        }
+      : {
+          label: 'Roll up & out 次數',
+          value: '功能關閉',
+        };
+    cards.splice(4, 0, rollCard);
+    return cards;
+  }, [enableRoll, result, summaryCards]);
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 px-6 py-8 md:px-10">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 pb-12 lg:gap-12">
@@ -1018,7 +1036,7 @@ export default function Page() {
                   })}
                 </div>
                 <div
-                  className={isFullscreen ? 'flex-1 min-h-0' : 'h-[34rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
+                  className={isFullscreen ? 'flex-1 min-h-0' : 'h-[42rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
                   style={{
                     overscrollBehavior: 'contain',
                     paddingBottom: isFullscreen ? '3.5rem' : '3rem',
@@ -1031,10 +1049,10 @@ export default function Page() {
                     {/* 👇 調整左右 margin 以容納 Y 軸寬度，並增加 bottom margin */}
                     <LineChart data={renderedData} margin={chartMargin}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
-                      <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+                      <XAxis dataKey="date" tick={{ fontSize: 12, fontWeight: 600 }} minTickGap={30} />
                       <YAxis
                         yAxisId="value"
-                        tick={{ fontSize: 12 }}
+                        tick={{ fontSize: 12, fontWeight: 600 }}
                         tickFormatter={formatValueTick}
                         width={80}
                         domain={['auto', 'auto']} // <--- 新增 domain
@@ -1042,7 +1060,7 @@ export default function Page() {
                       <YAxis
                         yAxisId="price"
                         orientation="right"
-                        tick={{ fontSize: 12 }}
+                        tick={{ fontSize: 12, fontWeight: 600 }}
                         tickFormatter={formatPriceTick}
                         width={72}
                         domain={['auto', 'auto']} // <--- 新增 domain
@@ -1116,7 +1134,7 @@ export default function Page() {
                 <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
               </div>
               <div className="grid grid-cols-1 gap-4 text-sm [grid-auto-rows:1fr] sm:grid-cols-2 lg:grid-cols-4">
-                {summaryCards.map(card => (
+                {summaryCardsWithRoll.map(card => (
                   <div
                     key={card.label}
                     className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm"
