@@ -466,23 +466,33 @@ export default function Page() {
   );
   const formatPnL = useCallback((value: number) => `${value >= 0 ? '+' : ''}${formatCurrency(value, 0)}`, [formatCurrency]);
   const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), [formatCurrency]);
-  const formatPriceTick = useCallback(
-    (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-    [],
-  );
+const formatPriceTick = useCallback(
+  (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+  [],
+);
 
-  const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
-    if (!active || !payload || payload.length === 0) return null;
-    const settlement = (payload[0].payload as any)?.settlement;
-    const callDelta = (payload[0].payload as any)?.CallDelta;
-    const settlementTitle = settlement
-      ? settlement.type === 'roll'
-        ? 'Roll up & out'
-        : 'Covered Call 結算'
-      : null;
-    return (
-      <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
-        <div className="mb-2 text-sm font-semibold">{label}</div>
+const formatWeekdayZh = (isoDate: string) => {
+  if (!isoDate) return '';
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  const weekdayNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+  return weekdayNames[date.getUTCDay()];
+};
+
+const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string, string>) => {
+  if (!active || !payload || payload.length === 0) return null;
+  const settlement = (payload[0].payload as any)?.settlement;
+  const callDelta = (payload[0].payload as any)?.CallDelta;
+  const weekday = typeof label === 'string' ? formatWeekdayZh(label) : '';
+  const displayLabel = weekday ? `${label}（${weekday}）` : label;
+  const settlementTitle = settlement
+    ? settlement.type === 'roll'
+      ? 'Roll up & out'
+      : 'Covered Call 結算'
+    : null;
+  return (
+    <div className="rounded-xl border bg-white p-3 text-xs shadow-lg">
+      <div className="mb-2 text-sm font-semibold">{displayLabel}</div>
         <div className="space-y-1">
           {payload.map(item => (
             <div key={item.dataKey} className="flex items-center justify-between gap-3">
