@@ -22,7 +22,7 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
   const res = await fetch(u, { cache: 'no-store' });
   if (!res.ok) throw new Error(`API ${res.status}`);
   const json = await res.json();
-  if (!json?.rows?.length) throw new Error('沒�?資�?（檢?�代�??��?�?);
+  if (!json?.rows?.length) throw new Error('沒有資料（請檢查代碼或日期範圍）');
   return {
     rows: json.rows as { date: string; open: number; high: number; low: number; close: number; adjClose: number }[],
     earningsDates: Array.isArray(json.earningsDates) ? (json.earningsDates as string[]) : [],
@@ -40,7 +40,7 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: RollLabelViewBox; x?: numbe
   if (!viewBox && typeof x !== 'number') return null;
   const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
   const chartTop = viewBox?.y ?? 0;
-  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox.x ?? 0 : 0;
+  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox?.x ?? 0 : 0;
   const chartRight = viewBox && viewBox.width && viewBox.width > 0 ? chartLeft + viewBox.width : null;
   const labelWidth = 92;
   const labelHeight = 22;
@@ -156,7 +156,7 @@ export default function Page() {
     setBusy(true); setError(null); setResult(null);
     try {
       const payload = await fetchYahooDailyViaApi(ticker.trim(), start, end);
-      if (payload.rows.length < 30) throw new Error('資�?太�?，�??�大?��??�?��?);
+      if (payload.rows.length < 30) throw new Error('資料太少，請擴大日期範圍');
       const res = runBacktest(payload.rows, {
         initialCapital,
         shares,
@@ -287,6 +287,8 @@ export default function Page() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isFullscreen]);
+
+
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -455,17 +457,17 @@ export default function Page() {
                 <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
               )}
               {typeof settlement.delta === 'number' && (
-                <div>Delta：Δ {settlement.delta.toFixed(2)}</div>
+                <div>Delta：{settlement.delta.toFixed(2)}</div>
               )}
               {settlement.type === 'roll' && (
-                <div className="text-[11px] text-slate-500">已提前展期至更遠到期日</div>
+                <div className="text-[11px] text-slate-500">已提前平倉並換至下一期合約</div>
               )}
             </div>
           </div>
         )}
         {typeof callDelta === 'number' && (
           <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
-            當前 Delta：Δ {callDelta.toFixed(2)}
+            當日 Delta：{callDelta.toFixed(2)}
           </div>
         )}
       </div>
@@ -532,35 +534,27 @@ export default function Page() {
     }
   }, []);
 
-  const summaryCards = useMemo((): SummaryCard[] => {
+  const summaryCards = useMemo<SummaryCard[]>(() => {
     if (!result) return [];
-    const cards: SummaryCard[] = [
+    return [
       {
-        label: '估�?歷史波�?（HV，年?��?',
+        label: '估計歷史波動（HV，年化）',
         value: `${(result.hv * 100).toFixed(1)}%`,
       },
       {
-        label: '使用 IV（年?��?',
+        label: '使用 IV（年化）',
         value: `${(result.ivUsed * 100).toFixed(1)}%`,
       },
       {
-        label: 'Call Delta ?��?',
-        value: result.effectiveTargetDelta != null ? `? ${result.effectiveTargetDelta.toFixed(2)}` : '? --',
+        label: 'Call Delta 目標',
+        value: result.effectiveTargetDelta != null ? `~ ${result.effectiveTargetDelta.toFixed(2)}` : '—',
       },
       {
-        label: 'Roll Delta ?��?,
+        label: 'Roll Delta 閾值',
         value: enableRoll
           ? result.rollDeltaTrigger != null
-            ? `? ${result.rollDeltaTrigger.toFixed(2)}`
-            : `? ${rollDeltaThreshold.toFixed(2)}`
-          : '?��???,
-      },
-      {
-        label: 'Roll Delta 門檻',
-        value: enableRoll
-          ? result.rollDeltaTrigger != null
-            ? `Δ ${result.rollDeltaTrigger.toFixed(2)}`
-            : `Δ ${rollDeltaThreshold.toFixed(2)}`
+            ? `~ ${result.rollDeltaTrigger.toFixed(2)}`
+            : `~ ${rollDeltaThreshold.toFixed(2)}`
           : '未啟用',
       },
       {
@@ -568,25 +562,23 @@ export default function Page() {
         value: `${(result.bhReturn * 100).toFixed(1)}%`,
       },
       {
-        label: 'Covered Call 總報??,
+        label: 'Covered Call 總報酬',
         value: `${(result.ccReturn * 100).toFixed(1)}%`,
       },
       {
-        label: 'Buy&Hold ?�後�??�股??,
+        label: 'Buy&Hold 期末持股',
         value: result.bhShares.toLocaleString(),
       },
       {
-        label: 'Covered Call ?�後�??�股??,
+        label: 'Covered Call 期末持股',
         value: result.ccShares.toLocaleString(),
       },
       {
-        label: 'Covered Call ?��?',
+        label: 'Covered Call 勝率',
         value: `${((result.ccWinRate ?? 0) * 100).toFixed(1)}%`,
-        footnote: `${result.ccSettlementCount ?? 0} 次�?算`,
+        footnote: `${result.ccSettlementCount ?? 0} 次結算`,
       },
-    ];
-
-    return cards;
+    ] satisfies SummaryCard[];
   }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
@@ -595,9 +587,9 @@ export default function Page() {
         <header className="flex flex-col gap-3 border-b border-slate-200/80 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Covered Call Lab</p>
-            <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">Covered Call 策略回測器</h1>
+            <h1 className="mt-2 text-3xl font-bold text-slate-900 md:text-4xl">Covered Call 策略回測</h1>
           </div>
-          <div className="text-sm text-slate-500">資料來源：Yahoo Finance（經由伺服器端代理）</div>
+          <div className="text-sm text-slate-500">資料來源：Yahoo Finance（經伺服器端代理）</div>
         </header>
 
         <section className={`${panelClass} space-y-6 p-6 md:p-8`}>
@@ -607,12 +599,12 @@ export default function Page() {
           </div>
           <div className="grid gap-5 md:grid-cols-3">
             <label className="space-y-2">
-              <div className="text-sm">股票代碼（美股）</div>
+              <div className="text-sm">股票代號（美股）</div>
               <input
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={ticker}
                 onChange={e => setTicker(e.target.value.toUpperCase())}
-                placeholder="如 AAPL、TSLA"
+                placeholder="如 AAPL, TSLA"
               />
             </label>
             <label className="space-y-2">
@@ -634,7 +626,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">初始現金（USD，可為0）</div>
+              <div className="text-sm">初始現金（USD，可為 0）</div>
               <input
                 type="number"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -652,7 +644,7 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">標的 Delta 目標：{targetDelta.toFixed(2)}</div>
+              <div className="text-sm">目標 Delta：{targetDelta.toFixed(2)}</div>
               <input
                 type="range"
                 min={0.1}
@@ -664,14 +656,14 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="text-sm">到期頻率</div>
+              <div className="text-sm">換倉頻率</div>
               <select
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={freq}
                 onChange={e => setFreq(e.target.value as any)}
               >
-                <option value="weekly">週選擇權</option>
-                <option value="monthly">月選擇權</option>
+                <option value="weekly">每週換倉</option>
+                <option value="monthly">每月換倉</option>
               </select>
             </label>
             <label className="space-y-2">
@@ -692,7 +684,7 @@ export default function Page() {
                 onChange={e => setReinvestPremium(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
               />
-              <span className="text-sm">權利金再投入增持股票</span>
+              <span className="text-sm">權利金滾入再投資 (買股)</span>
             </label>
             <div className="grid gap-3 text-sm md:col-span-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
@@ -711,7 +703,7 @@ export default function Page() {
                   onChange={e => setSkipEarningsWeek(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>避開財報週（不賣 Call）</span>
+                <span>跳過財報週 (不賣 Call)</span>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
                 <input
@@ -720,7 +712,7 @@ export default function Page() {
                   onChange={e => setDynamicContracts(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>股數每滿 100 股自動增加張數</span>
+                <span>合約張數依持股動態調整</span>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
                 <input
@@ -729,13 +721,13 @@ export default function Page() {
                   onChange={e => setEnableRoll(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Delta 達閾值且距到期 &gt; 2 天時 Roll up &amp; out</span>
+                <span>Delta 觸價且 DTE &gt; 2 時 Roll up &amp; out</span>
               </label>
             </div>
             {enableRoll && (
               <div className="md:col-span-3 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 text-xs md:text-sm">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <span className="font-semibold text-indigo-900">Roll Delta 門檻：Δ {rollDeltaThreshold.toFixed(2)}</span>
+                  <span className="font-semibold text-indigo-900">Roll Delta 閾值： {rollDeltaThreshold.toFixed(2)}</span>
                   <div className="flex flex-1 items-center gap-3 md:max-w-md">
                     <input
                       type="range"
@@ -762,7 +754,7 @@ export default function Page() {
                   </div>
                 </div>
                 <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  當持有部位的 Delta 達到或超過此閾值，且距離到期超過兩個交易日時，系統會提前 Roll up &amp; out。
+                  當持有部位的 Delta 達到此設定值，且距離到期日尚有兩天以上時，系統將執行 Roll up &amp; out。
                 </p>
               </div>
             )}
@@ -772,7 +764,7 @@ export default function Page() {
                 disabled={busy}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {busy ? '計算中…' : '開始回測'}
+                {busy ? '計算中...' : '開始回測'}
               </button>
             </div>
             {error && <div className="md:col-span-3 text-red-600 text-sm">{error}</div>}
@@ -788,141 +780,142 @@ export default function Page() {
                   : `${panelClass} flex flex-col p-5 md:p-8`
               }`}
             >
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">資產曲線（USD）</h2>
-                <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Performance</span>
-              </div>
-              <div className="mb-4 flex flex-col gap-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between md:text-sm">
-                <div>
-                  目前顯示區間：{visibleRangeLabel || '全部資料'}。可透過下方拖曳選擇區間，當選擇整段資料時會自動顯示全部資料點。
+              <ChartErrorBoundary>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-slate-900">資產曲線（USD）</h2>
+                  <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Performance</span>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-                  <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
-                    <span>數據點密度</span>
-                    <select
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 md:text-sm"
-                      value={pointDensity}
-                      onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
-                    >
-                      <option value="dense">高</option>
-                      <option value="normal">中</option>
-                      <option value="sparse">低</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setIsFullscreen(current => !current)}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 md:text-sm"
-                  >
-                    {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
-                  </button>
-                </div>
-              </div>
-              <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 md:text-sm">
-                {SERIES_CONFIG.map(series => {
-                  const active = seriesVisibility[series.key];
-                  return (
+                <div className="mb-4 flex flex-col gap-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between md:text-sm">
+                  <div>
+                    目前顯示範圍：{visibleRangeLabel || '全部資料'}。可拖曳下方 Brush 調整範圍，或滾動滑鼠縮放。
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                    <label className="flex items-center gap-2 whitespace-nowrap text-xs md:text-sm">
+                      <span>圖表點密度</span>
+                      <select
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 md:text-sm"
+                        value={pointDensity}
+                        onChange={e => setPointDensity(e.target.value as typeof pointDensity)}
+                      >
+                        <option value="dense">密</option>
+                        <option value="normal">中</option>
+                        <option value="sparse">疏</option>
+                      </select>
+                    </label>
                     <button
-                      key={series.key}
                       type="button"
-                      onClick={() => toggleSeries(series.key)}
-                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
-                        active ? 'border-transparent bg-slate-100 text-slate-800 shadow-sm' : 'border-slate-200 text-slate-400'
-                      }`}
-                      aria-pressed={active}
+                      onClick={() => setIsFullscreen(current => !current)}
+                      className="inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 md:text-sm"
                     >
-                      <span
-                        className="h-1.5 w-10 rounded-full"
-                        style={
-                          series.strokeDasharray
-                            ? {
-                                backgroundImage: `repeating-linear-gradient(90deg, ${series.color}, ${series.color} 10px, transparent 10px, transparent 18px)`,
-                                opacity: active ? 1 : 0.3,
-                              }
-                            : {
-                                backgroundColor: series.color,
-                                opacity: active ? 1 : 0.3,
-                              }
-                        }
-                      />
-                      <span>{series.label}</span>
+                      {isFullscreen ? '退出全螢幕 (Esc)' : '全螢幕檢視'}
                     </button>
-                  );
-                })}
-              </div>
-              <div
-                className={isFullscreen ? 'flex-1 min-h-0' : 'h-[34rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
-                style={{ overscrollBehavior: 'contain' }}
-                ref={chartContainerRef}
-                onWheel={handleWheelZoom}
-                onMouseDown={handleMouseDown}
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
-                    <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
-                    <YAxis
-                      yAxisId="price"
-                      orientation="right"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={formatPriceTick}
-                      width={72}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Brush
-                      key={brushUpdateId}
-                      dataKey="CoveredCall"
-                      data={chartData}
-                      height={24}
-                      travellerWidth={12}
-                      stroke="#94a3b8"
-                      startIndex={brushStartIndex}
-                      endIndex={brushEndIndex}
-                      updateId={brushUpdateId}
-                      onChange={handleBrushChange}
-                    >
-                      <LineChart data={chartData}>
-                        <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
-                        <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
-                      </LineChart>
-                    </Brush>
-                    {SERIES_CONFIG.map(series => (
-                      <Line
+                  </div>
+                </div>
+                <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 md:text-sm">
+                  {SERIES_CONFIG.map(series => {
+                    const active = seriesVisibility[series.key];
+                    return (
+                      <button
                         key={series.key}
-                        type="monotone"
-                        dataKey={series.dataKey}
-                        dot={series.key === 'coveredCall' ? settlementDotRenderer : false}
-                        activeDot={series.key === 'coveredCall' ? { r: 6 } : undefined}
-                        strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
-                        stroke={series.color}
-                        name={series.label}
-                        yAxisId={series.axis}
-                        hide={!seriesVisibility[series.key]}
-                        strokeDasharray={series.strokeDasharray}
-                        isAnimationActive={false}
-                        connectNulls
+                        type="button"
+                        onClick={() => toggleSeries(series.key)}
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+                          active ? 'border-transparent bg-slate-100 text-slate-800 shadow-sm' : 'border-slate-200 text-slate-400'
+                        }`}
+                        aria-pressed={active}
+                      >
+                        <span
+                          className="h-1.5 w-10 rounded-full"
+                          style={
+                            series.strokeDasharray
+                              ? {
+                                  backgroundImage: `repeating-linear-gradient(90deg, ${series.color}, ${series.color} 10px, transparent 10px, transparent 18px)`,
+                                  opacity: active ? 1 : 0.3,
+                                }
+                              : {
+                                  backgroundColor: series.color,
+                                  opacity: active ? 1 : 0.3,
+                                }
+                          }
+                        />
+                        <span>{series.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div
+                  className={isFullscreen ? 'flex-1 min-h-0' : 'h-[34rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
+                  style={{ overscrollBehavior: 'contain' }}
+                  ref={chartContainerRef}
+                  onWheel={handleWheelZoom}
+                  onMouseDown={handleMouseDown}
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={renderedData} margin={{ top: 48, right: 32, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
+                      <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+                      <YAxis yAxisId="value" tick={{ fontSize: 12 }} tickFormatter={formatValueTick} width={80} />
+                      <YAxis
+                        yAxisId="price"
+                        orientation="right"
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={formatPriceTick}
+                        width={72}
                       />
-                    ))}
-                    {visibleRolls.map((point: any, idx: number) => (
-                      <ReferenceLine
-                        key={`roll-${point.date}-${idx}`}
-                        x={point.date}
-                        stroke="#6366f1"
-                        strokeDasharray="4 2"
-                        strokeOpacity={0.6}
-                        label={<RollMarkerLabel />}
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+                      <Tooltip content={<CustomTooltip />} />
+                      <Brush
+                        key={brushUpdateId}
+                        dataKey="CoveredCall"
+                        data={chartData}
+                        height={24}
+                        travellerWidth={12}
+                        stroke="#94a3b8"
+                        startIndex={brushStartIndex}
+                        endIndex={brushEndIndex}
+                        updateId={brushUpdateId}
+                        onChange={handleBrushChange}
+                      >
+                        <LineChart data={chartData}>
+                          <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                          <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                        </LineChart>
+                      </Brush>
+                      {SERIES_CONFIG.map(series => (
+                        <Line
+                          key={series.key}
+                          type="monotone"
+                          dataKey={series.dataKey}
+                          dot={series.key === 'coveredCall' ? settlementDotRenderer : false}
+                          activeDot={series.key === 'coveredCall' ? { r: 6 } : undefined}
+                          strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                          stroke={series.color}
+                          name={series.label}
+                          yAxisId={series.axis}
+                          hide={!seriesVisibility[series.key]}
+                          strokeDasharray={series.strokeDasharray}
+                          isAnimationActive={false}
+                          connectNulls
+                        />
+                      ))}
+                      {visibleRolls.map((point: any, idx: number) => (
+                        <ReferenceLine
+                          key={`roll-${point.date}-${idx}`}
+                          x={point.date}
+                          stroke="#6366f1"
+                          strokeDasharray="4 2"
+                          strokeOpacity={0.6}
+                          label={<RollMarkerLabel />}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </ChartErrorBoundary>
             </section>
 
             <section className={`${panelClass} p-6 md:p-8`}>
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold text-slate-900">回測摘要</h2>
+                <h2 className="text-lg font-semibold text-slate-900">回測總結</h2>
                 <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm [grid-auto-rows:1fr] md:grid-cols-3 lg:grid-cols-9">
@@ -943,13 +936,13 @@ export default function Page() {
 
         {!result && (
           <section className={`${panelClass} p-6 md:p-8`}>
-            <h2 className="font-semibold mb-3">如何操作？</h2>
-            <p className="text-sm leading-7">輸入美股代碼（如 AAPL、TSLA）、日期區間與參數，點擊「開始回測」。系統會透過伺服器端 API 代理 Yahoo，計算買入持有與不同週期的 covered call 策略資產曲線並比較。</p>
-            <p className="text-sm leading-7">可調整 Delta 目標（常見 0.2–0.4）、週/月選擇權，以及是否將權利金再投入。若想更貼近實務市場報價，可覆寫年化隱含波動（IV）。</p>
+            <h2 className="font-semibold mb-3">如何使用？</h2>
+            <p className="text-sm leading-7">輸入美股代號（如 AAPL, TSLA）、日期範圍與持有股數，點擊「開始回測」。系統將透過伺服器端 API 抓取 Yahoo 股價，計算買入持有 (Buy & Hold) vs. 賣出 Covered Call 策略的資產變化並進行比較。</p>
+            <p className="text-sm leading-7">可調整賣方 Delta（常用 0.2~0.4）、換倉頻率，以及是否將權利金滾入再投資。若想使用更貼近市場的估價，可覆寫年化隱含波動率 (IV)。</p>
           </section>
         )}
 
-        <footer className="pt-8 text-center text-xs text-slate-400">此工具僅供教育研究，不構成投資建議。</footer>
+        <footer className="pt-8 text-center text-xs text-slate-400">此工具僅供學術研究與策略模擬，不構成任何投資建議。</footer>
       </div>
     </main>
   );
