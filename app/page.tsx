@@ -876,8 +876,8 @@ export default function Page() {
                         onChange={handleBrushChange}
                       >
                         <LineChart data={chartData}>
-                          <Line type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
-                          <Line type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
+                          <Line yAxisId="value" type="monotone" dataKey="BuyAndHold" dot={false} stroke="#2563eb" strokeWidth={1} />
+                          <Line yAxisId="value" type="monotone" dataKey="CoveredCall" dot={false} stroke="#f97316" strokeWidth={1} />
                         </LineChart>
                       </Brush>
                       {SERIES_CONFIG.map(series => (
