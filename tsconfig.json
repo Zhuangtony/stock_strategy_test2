@@ -38,7 +38,8 @@
                 ],
     "exclude":  [
                     "node_modules",
-                    "temp_*.ts"
+                    "temp_*.ts",
+                    "temp_*.tsx"
                 ],
     "plugins":  [
                     {
