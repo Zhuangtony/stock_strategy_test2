@@ -116,6 +116,12 @@ const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
 const panelClass =
   'rounded-3xl border border-slate-200/80 bg-white/95 shadow-[0_20px_45px_-28px_rgb(15_23_42_/_55%)] backdrop-blur-sm';
 
+type SummaryCard = {
+  label: string;
+  value: string;
+  footnote?: string;
+};
+
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
   const [start, setStart] = useState('2018-01-01');
@@ -526,12 +532,8 @@ export default function Page() {
     }
   }, []);
 
-  const summaryCards = useMemo(() => {
-    if (!result) return [] as {
-      label: string;
-      value: string;
-      footnote?: string;
-    }[];
+  const summaryCards = useMemo<SummaryCard[]>(() => {
+    if (!result) return [];
     return [
       {
         label: '估計歷史波動（HV，年化）',
@@ -574,7 +576,7 @@ export default function Page() {
         value: `${((result.ccWinRate ?? 0) * 100).toFixed(1)}%`,
         footnote: `${result.ccSettlementCount ?? 0} 次結算`,
       },
-    ];
+    ] satisfies SummaryCard[];
   }, [enableRoll, result, rollDeltaThreshold]);
 
   return (
