@@ -54,6 +54,7 @@ export function runBacktest(
     enableRoll: boolean;
     earningsDates?: string[];
     rollDeltaThreshold?: number;
+    rollDaysBeforeExpiry?: number;
   },
 ) {
   const dates = ohlc.map(d => d.date);
@@ -68,6 +69,10 @@ export function runBacktest(
       ? params.rollDeltaThreshold
       : 0.7,
   );
+  const scheduledRollOffset =
+    typeof params.rollDaysBeforeExpiry === 'number' && Number.isFinite(params.rollDaysBeforeExpiry)
+      ? Math.max(0, Math.min(4, Math.floor(params.rollDaysBeforeExpiry)))
+      : null;
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
@@ -132,10 +137,12 @@ export function runBacktest(
 
     if (params.enableRoll && openCall) {
       const daysToExpiry = openCall.expIdx - i;
-      if (daysToExpiry > 2) {
+      if (daysToExpiry > 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
-        if (currentDelta >= rollDeltaTrigger) {
+        const meetsDeltaTrigger = daysToExpiry > 2 && currentDelta >= rollDeltaTrigger;
+        const meetsScheduledRoll = scheduledRollOffset !== null && daysToExpiry === scheduledRollOffset + 1;
+        if (meetsDeltaTrigger || meetsScheduledRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
@@ -161,10 +168,12 @@ export function runBacktest(
           const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
           let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
           if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
-          const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
-          if (newStrike <= openCall.strike) {
-            newStrike = openCall.strike + minIncrement;
-            if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
+          if (meetsDeltaTrigger) {
+            const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
+            if (newStrike <= openCall.strike) {
+              newStrike = openCall.strike + minIncrement;
+              if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
+            }
           }
           const newQty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
           if (newQty > 0) {
