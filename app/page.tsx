@@ -395,6 +395,22 @@ export default function Page() {
     return sampled;
   }, [pointDensity, visibleData, visibleExpirations, visibleRolls]);
 
+  const chartMargin = useMemo(
+    () =>
+      isFullscreen
+        ? { top: 48, right: 96, bottom: 96, left: 96 }
+        : { top: 48, right: 80, bottom: 88, left: 80 },
+    [isFullscreen],
+  );
+
+  const brushAppearance = useMemo(
+    () =>
+      isFullscreen
+        ? { height: 32, travellerWidth: 14 }
+        : { height: 28, travellerWidth: 12 },
+    [isFullscreen],
+  );
+
   const formatCurrency = useCallback(
     (value: number, fractionDigits = 2) =>
       value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: fractionDigits }),
@@ -845,14 +861,17 @@ export default function Page() {
                 </div>
                 <div
                   className={isFullscreen ? 'flex-1 min-h-0' : 'h-[34rem] rounded-2xl border border-slate-200/70 bg-slate-50/50 p-4 shadow-inner'}
-                  style={{ overscrollBehavior: 'contain' }}
+                  style={{
+                    overscrollBehavior: 'contain',
+                    paddingBottom: isFullscreen ? '3.5rem' : '3rem',
+                  }}
                   ref={chartContainerRef}
                   onWheel={handleWheelZoom}
                   onMouseDown={handleMouseDown}
                 >
                   <ResponsiveContainer width="100%" height="100%">
                     {/* 👇 調整左右 margin 以容納 Y 軸寬度，並增加 bottom margin */}
-                    <LineChart data={renderedData} margin={{ top: 48, right: 80, bottom: 5, left: 80 }}>
+                    <LineChart data={renderedData} margin={chartMargin}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
                       <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
                       <YAxis
@@ -875,8 +894,8 @@ export default function Page() {
                         key={brushUpdateId}
                         dataKey="CoveredCall"
                         data={chartData}
-                        height={24}
-                        travellerWidth={12}
+                        height={brushAppearance.height}
+                        travellerWidth={brushAppearance.travellerWidth}
                         stroke="#94a3b8"
                         startIndex={brushStartIndex}
                         endIndex={brushEndIndex}
