@@ -151,6 +151,7 @@ export default function Page() {
   const [dynamicContracts, setDynamicContracts] = useState(true);
   const [enableRoll, setEnableRoll] = useState(true);
   const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.7);
+  const [rollDaysBeforeExpiry, setRollDaysBeforeExpiry] = useState(0);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +191,7 @@ export default function Page() {
         dynamicContracts,
         enableRoll,
         rollDeltaThreshold,
+        rollDaysBeforeExpiry,
         earningsDates: payload.earningsDates,
       });
       const extra = comparisonDeltas.map(deltaInput => ({
@@ -209,6 +211,7 @@ export default function Page() {
           dynamicContracts,
           enableRoll,
           rollDeltaThreshold,
+          rollDaysBeforeExpiry,
           earningsDates: payload.earningsDates,
         }),
       }));
@@ -235,6 +238,7 @@ export default function Page() {
     targetDelta,
     ticker,
     rollDeltaThreshold,
+    rollDaysBeforeExpiry,
   ]);
 
   const toggleSeries = useCallback((key: SeriesKey) => {
@@ -1140,7 +1144,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                   onChange={e => setEnableRoll(e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span>Delta 觸價且 DTE &gt; 2 時 Roll up &amp; out</span>
+                <span>Delta 觸價或距離到期設定天數時 Roll up &amp; out</span>
               </label>
             </div>
             {enableRoll && (
@@ -1172,8 +1176,37 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps<number | string,
                     />
                   </div>
                 </div>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <span className="font-semibold text-indigo-900">
+                    固定提前 Roll：到期前 {rollDaysBeforeExpiry + 1} 天
+                  </span>
+                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
+                    <input
+                      type="range"
+                      min={0}
+                      max={4}
+                      step={1}
+                      value={rollDaysBeforeExpiry}
+                      onChange={e => setRollDaysBeforeExpiry(Number(e.target.value))}
+                      className="flex-1 accent-indigo-500"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={4}
+                      step={1}
+                      value={rollDaysBeforeExpiry}
+                      onChange={e => {
+                        const next = Number(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setRollDaysBeforeExpiry(Math.max(0, Math.min(4, Math.round(next))));
+                      }}
+                      className="w-24 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-right shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                  </div>
+                </div>
                 <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  當持有部位的 Delta 達到此設定值，且距離到期日尚有兩天以上時，系統將執行 Roll up &amp; out。
+                  當持有部位的 Delta 達到此設定值，或進入上述固定提前天數時，系統將執行 Roll up &amp; out。
                 </p>
               </div>
             )}

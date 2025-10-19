@@ -54,6 +54,7 @@ export function runBacktest(
     enableRoll: boolean;
     earningsDates?: string[];
     rollDeltaThreshold?: number;
+    rollDaysBeforeExpiry?: number;
   },
 ) {
   const dates = ohlc.map(d => d.date);
@@ -68,6 +69,11 @@ export function runBacktest(
       ? params.rollDeltaThreshold
       : 0.7,
   );
+  const proximityDaysSetting =
+    typeof params.rollDaysBeforeExpiry === 'number' && Number.isFinite(params.rollDaysBeforeExpiry)
+      ? Math.max(0, Math.min(4, Math.floor(params.rollDaysBeforeExpiry)))
+      : 0;
+  const expiryProximityTrigger = Math.max(1, Math.min(5, proximityDaysSetting + 1));
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
@@ -132,10 +138,12 @@ export function runBacktest(
 
     if (params.enableRoll && openCall) {
       const daysToExpiry = openCall.expIdx - i;
-      if (daysToExpiry > 2) {
+      if (daysToExpiry > 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
-        if (currentDelta >= rollDeltaTrigger) {
+        const shouldRollByProximity = daysToExpiry <= expiryProximityTrigger;
+        const shouldRollByDelta = currentDelta >= rollDeltaTrigger;
+        if (shouldRollByProximity || shouldRollByDelta) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
