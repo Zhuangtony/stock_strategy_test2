@@ -913,6 +913,7 @@ export default function Page() {
                           stroke="#6366f1"
                           strokeDasharray="4 2"
                           strokeOpacity={0.6}
+                          yAxisId="value"
                           label={<RollMarkerLabel />}
                         />
                       ))}
