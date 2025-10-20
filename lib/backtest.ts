@@ -36,6 +36,7 @@ export interface SettlementEvent {
   qty: number;
   type: 'roll' | 'expiry';
   delta?: number;
+  rollReason?: 'delta' | 'scheduled';
 }
 
 export interface BacktestCurvePoint {
@@ -53,6 +54,7 @@ export interface BacktestCurvePoint {
     qty: number;
     type: 'roll' | 'expiry';
     delta?: number;
+    rollReason?: 'delta' | 'scheduled';
   };
 }
 
@@ -172,6 +174,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     qty: number;
     type: 'roll' | 'expiry';
     delta?: number;
+    rollReason?: 'delta' | 'scheduled';
   }[] = [];
   const rollEvents: {
     index: number;
@@ -182,7 +185,9 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     underlying: number;
     premium: number;
     qty: number;
+    type: 'roll';
     delta?: number;
+    rollReason: 'delta' | 'scheduled';
   }[] = [];
 
   for (let i = 0; i < prices.length; i++) {
@@ -190,17 +195,22 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
 
     if (params.enableRoll && openCall) {
       const daysToExpiry = openCall.expIdx - i;
-      if (daysToExpiry > 0) {
+      if (daysToExpiry >= 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
         const meetsDeltaTrigger = daysToExpiry > 2 && currentDelta >= rollDeltaTrigger;
-        const meetsScheduledRoll = scheduledRollOffset !== null && daysToExpiry === scheduledRollOffset + 1;
+        let meetsScheduledRoll = false;
+        if (scheduledRollOffset !== null) {
+          const targetIndex = Math.max(openCall.sellIdx, openCall.expIdx - scheduledRollOffset);
+          meetsScheduledRoll = i >= targetIndex;
+        }
         if (meetsDeltaTrigger || meetsScheduledRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
           const rollPnl = (openCall.premium - closeValue) * (openCall.qty * 100);
           const totalAfterClose = cash + shares * S;
+          const rollReason: 'delta' | 'scheduled' = meetsDeltaTrigger ? 'delta' : 'scheduled';
           const rollRecord = {
             index: i,
             date: dates[i],
@@ -212,6 +222,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             qty: openCall.qty,
             type: 'roll' as const,
             delta: currentDelta,
+            rollReason,
           };
           settlements.push(rollRecord);
           rollEvents.push(rollRecord);
@@ -355,6 +366,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       qty: number;
       type: 'roll' | 'expiry';
       delta?: number;
+      rollReason?: 'delta' | 'scheduled';
     },
   }));
 
@@ -367,6 +379,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       qty: s.qty,
       type: s.type,
       delta: s.delta,
+      rollReason: s.rollReason,
     };
   }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
