@@ -21,7 +21,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
-import type { RunBacktestResult } from '../../lib/backtest';
+import type { BacktestCurvePoint, RunBacktestResult } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { ComparisonDeltaInput, ComparisonResultEntry } from './types';
 
@@ -98,6 +98,10 @@ type SummaryCard = {
   label: string;
   value: string;
   footnote?: string;
+};
+
+type ChartDatum = BacktestCurvePoint & {
+  [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
 type BacktestResultsProps = {
@@ -178,7 +182,7 @@ export function BacktestResults({
   );
 
   const chartData = useMemo(() => {
-    const base = result.curve.map(point => ({ ...point }));
+    const base = result.curve.map(point => ({ ...point })) as ChartDatum[];
     if (!comparisonSeriesList.length) return base;
     comparisonSeriesList.forEach(series => {
       const { curve, config } = series;

@@ -182,6 +182,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     underlying: number;
     premium: number;
     qty: number;
+    type: 'roll';
     delta?: number;
   }[] = [];
 
