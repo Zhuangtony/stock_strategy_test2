@@ -34,6 +34,15 @@ const formatDateWithWeekday = (value: string) => {
   return `${value} (${weekday})`;
 };
 
+const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+const formatDateWithWeekday = (value: string) => {
+  if (!value) return value;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const weekday = weekdayFormatter.format(parsed);
+  return `${value} (${weekday})`;
+};
+
 const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   const { cx, cy } = props as DotProps;
   if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;

@@ -225,7 +225,9 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             rollReason,
           };
           settlements.push(rollRecord);
-          rollEvents.push(rollRecord);
+          if (meetsDeltaTrigger) {
+            rollEvents.push({ ...rollRecord, rollReason: 'delta' });
+          }
 
           let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
           if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
