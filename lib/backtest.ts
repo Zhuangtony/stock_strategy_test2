@@ -230,7 +230,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
           }
 
           const originalHorizon = Math.max(1, openCall.expIdx - openCall.sellIdx + 1);
-          let newExpIdx = openCall.expIdx;
+          let newExpIdx: number = openCall.expIdx;
           for (let b = 0; b < boundaries.length; b += 2) {
             const cycleStart = boundaries[b];
             const cycleEnd = boundaries[b + 1];
