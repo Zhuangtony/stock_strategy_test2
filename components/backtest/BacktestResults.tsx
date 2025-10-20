@@ -21,9 +21,18 @@ import {
   type TooltipProps,
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
-import type { BacktestCurvePoint, RunBacktestResult } from '../../lib/backtest';
+import type { BacktestCurvePoint } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
-import type { ComparisonDeltaInput, ComparisonResultEntry } from './types';
+import type { StrategyConfigInput, StrategyRunResult } from './types';
+
+const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+const formatDateWithWeekday = (value: string) => {
+  if (!value) return value;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const weekday = weekdayFormatter.format(parsed);
+  return `${value} (${weekday})`;
+};
 
 const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
 const formatDateWithWeekday = (value: string) => {
@@ -128,9 +137,7 @@ type ChartDatum = BacktestCurvePoint & {
 };
 
 type BacktestResultsProps = {
-  result: RunBacktestResult;
-  comparisonDeltas: ComparisonDeltaInput[];
-  comparisonResults: ComparisonResultEntry[];
+  strategies: StrategyRunResult[];
   ticker: string;
   start: string;
   end: string;
@@ -138,14 +145,33 @@ type BacktestResultsProps = {
 };
 
 export function BacktestResults({
-  result,
-  comparisonDeltas,
-  comparisonResults,
+  strategies,
   ticker,
   start,
   end,
   panelClass,
 }: BacktestResultsProps) {
+  if (!strategies.length) return null;
+  const primaryStrategy = strategies[0];
+  const result = primaryStrategy.result;
+  const comparisonStrategies = strategies.slice(1);
+  const getStrategyColor = useCallback(
+    (index: number) => (index === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(index - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length]),
+    [],
+  );
+  const formatStrategyLabel = useCallback(
+    (config: StrategyConfigInput) => {
+      const base = config.label.trim() || 'Covered Call';
+      return `${base} (Δ${config.targetDelta.toFixed(2)})`;
+    },
+    [],
+  );
+  const formatSignedPercent = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '—';
+    const pct = value * 100;
+    const digits = Math.abs(pct) >= 100 ? 1 : 2;
+    return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
+  }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
     buyAndHold: true,
@@ -196,7 +222,7 @@ export function BacktestResults({
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
       { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
-      { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
+      { key: 'coveredCall', label: formatStrategyLabel(primaryStrategy.config), color: getStrategyColor(0), dataKey: 'CoveredCall', axis: 'value' },
       { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
       {
         key: 'callStrike',
@@ -207,28 +233,24 @@ export function BacktestResults({
         strokeDasharray: '6 3',
       },
     ],
-    [],
+    [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
   );
 
   const comparisonSeriesList = useMemo(
     () =>
-      comparisonDeltas.map((delta, index) => {
-        const entry = comparisonResults.find(item => item.id === delta.id);
-        const normalized = delta.value.toFixed(2);
-        const slugBase = normalized.replace('.', 'p');
-        const slug = `${slugBase}_${delta.id}`;
+      comparisonStrategies.map((entry, index) => {
+        const dataKey = `CoveredCall_${entry.id}`;
         const config: SeriesConfig = {
-          key: `coveredCall-${delta.id}`,
-          label: `Covered Call Δ${normalized}`,
-          color: COMPARISON_SERIES_COLORS[index % COMPARISON_SERIES_COLORS.length],
-          dataKey: `CoveredCall_${slug}`,
+          key: `strategy-${entry.id}`,
+          label: formatStrategyLabel(entry.config),
+          color: getStrategyColor(index + 1),
+          dataKey,
           axis: 'value',
           strokeDasharray: '5 3',
         };
-        const curveSource = entry?.result?.curve;
-        return { config, curve: Array.isArray(curveSource) ? curveSource : [] };
+        return { config, curve: entry.result.curve };
       }),
-    [comparisonDeltas, comparisonResults],
+    [comparisonStrategies, formatStrategyLabel, getStrategyColor],
   );
 
   const chartData = useMemo(() => {
@@ -246,17 +268,10 @@ export function BacktestResults({
   }, [comparisonSeriesList, result.curve]);
 
   const seriesConfig = useMemo(() => {
-    const base = BASE_SERIES_CONFIG.map(series => {
-      if (series.key === 'coveredCall') {
-        const effectiveDelta = result.effectiveTargetDelta;
-        const label = typeof effectiveDelta === 'number' ? `Covered Call Δ${effectiveDelta.toFixed(2)}` : series.label;
-        return { ...series, label } as SeriesConfig;
-      }
-      return { ...series } as SeriesConfig;
-    });
+    const base = BASE_SERIES_CONFIG.map(series => ({ ...series }));
     const dynamic = comparisonSeriesList.map(series => series.config);
     return [...base, ...dynamic];
-  }, [BASE_SERIES_CONFIG, comparisonSeriesList, result.effectiveTargetDelta]);
+  }, [BASE_SERIES_CONFIG, comparisonSeriesList]);
 
   useEffect(() => {
     setSeriesVisibility(prev => {
@@ -623,22 +638,20 @@ export function BacktestResults({
     };
 
     const baseRows = result.curve;
-    const comparisonColumns = comparisonResults
-      .filter(entry => Array.isArray(entry.result?.curve) && entry.result!.curve.length > 0)
-      .map(entry => {
-        const label = `Covered Call Value (Δ${entry.value.toFixed(2)})`;
-        const map = new Map<string, number | null>();
-        entry.result!.curve.forEach(point => {
-          const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
-          map.set(point.date, value);
-        });
-        return { label, map };
+    const comparisonColumns = comparisonStrategies.map(entry => {
+      const label = `${formatStrategyLabel(entry.config)} Value`;
+      const map = new Map<string, number | null>();
+      entry.result.curve.forEach(point => {
+        const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
+        map.set(point.date, value);
       });
+      return { label, map };
+    });
 
     const headers = [
       'Date',
       'Buy & Hold Value',
-      'Covered Call Value',
+      `${formatStrategyLabel(primaryStrategy.config)} Value`,
       'Underlying Price',
       'Call Strike',
       'Call Delta',
@@ -689,7 +702,7 @@ export function BacktestResults({
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [comparisonResults, end, result.curve, start, ticker]);
+  }, [comparisonStrategies, end, formatStrategyLabel, primaryStrategy.config, result.curve, start, ticker]);
 
   useEffect(() => {
     if (!scrollerMetrics.hasWindow) {
@@ -814,12 +827,28 @@ export function BacktestResults({
       const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
       const scheduledRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'scheduled');
       const formattedLabel = typeof label === 'string' ? formatDateWithWeekday(label) : label;
+      const strategyValues = payload
+        .filter(item => typeof item.dataKey === 'string' && item.dataKey.startsWith('CoveredCall'))
+        .map(item => ({
+          key: item.dataKey as string,
+          label: item.name,
+          color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
+          value: typeof item.value === 'number' ? item.value : null,
+        }));
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
           <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
           <div className="mt-2 space-y-1">
             <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
-            <div>Covered Call：{formatCurrency(point.CoveredCall)}</div>
+            {strategyValues.map(entry => (
+              <div key={entry.key} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+                  {entry.label}
+                </span>
+                <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+              </div>
+            ))}
             <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
             {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
             {deltaRollMarks.length > 0 && (
@@ -889,12 +918,12 @@ export function BacktestResults({
         footnote: `年化：約 ${annualized(result.bhReturn)}`,
       },
       {
-        label: 'Covered Call 報酬率',
+        label: `${formatStrategyLabel(primaryStrategy.config)} 報酬率`,
         value: formatPct(result.ccReturn),
         footnote: `年化：約 ${annualized(result.ccReturn)}`,
       },
       {
-        label: 'Covered Call 勝率',
+        label: `${formatStrategyLabel(primaryStrategy.config)} 勝率`,
         value: `${(result.ccWinRate * 100).toFixed(1)}%`,
         footnote: `樣本數：${result.ccSettlementCount} 次結算`,
       },
@@ -904,7 +933,7 @@ export function BacktestResults({
         footnote: `歷史波動率估計：${(result.hv * 100).toFixed(2)}%`,
       },
     ];
-  }, [result]);
+  }, [formatStrategyLabel, primaryStrategy.config, result]);
 
   const summaryCardsWithRoll = useMemo(() => {
     const deltaRollEvents = result.rollEvents.filter(event => (event.rollReason ?? 'delta') === 'delta');
@@ -912,15 +941,55 @@ export function BacktestResults({
     const averageRollDelta =
       deltaRollEvents.reduce((acc, cur) => acc + (typeof cur.delta === 'number' ? cur.delta : 0), 0) /
       Math.max(1, deltaRollEvents.length);
+    const scheduledText = (() => {
+      if (!primaryStrategy.config.enableRoll) return '已停用自動 Roll';
+      if (primaryStrategy.config.rollDaysBeforeExpiry === 0) return '預設換倉日：到期日 (週五)';
+      return `預設換倉日：到期前 ${primaryStrategy.config.rollDaysBeforeExpiry} 個交易日`;
+    })();
     return [
       ...summaryCards,
       {
         label: '平均 Roll Delta',
         value: averageRollDelta ? averageRollDelta.toFixed(2) : '—',
-        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}（僅統計 Delta 閾值觸發換倉）`,
+        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}（僅統計 Delta 閾值觸發換倉） · ${scheduledText}`,
       },
     ];
-  }, [result.rollDeltaTrigger, result.rollEvents, summaryCards]);
+  }, [primaryStrategy.config, result.rollDeltaTrigger, result.rollEvents, summaryCards]);
+
+  const strategyComparisonRows = useMemo(
+    () =>
+      strategies.map((entry, index) => {
+        const years = Math.max(1 / 12, entry.result.curve.length / 252);
+        const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
+        const rollDescription = entry.config.enableRoll
+          ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
+              entry.config.rollDaysBeforeExpiry === 0
+                ? '到期日換倉'
+                : `提前 ${entry.config.rollDaysBeforeExpiry} 日`
+            }`
+          : '未啟用';
+        const optionFlags: string[] = [];
+        if (entry.config.reinvestPremium) optionFlags.push('權利金再投資');
+        if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
+        if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
+        if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
+        const options = optionFlags.length ? optionFlags.join(' / ') : '—';
+        const finalValue = entry.result.curve.at(-1)?.CoveredCall;
+        return {
+          id: entry.id,
+          color: getStrategyColor(index),
+          label: formatStrategyLabel(entry.config),
+          finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
+          totalReturn: formatSignedPercent(entry.result.ccReturn),
+          annualized: formatSignedPercent(annualized),
+          winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
+          relativeReturn: formatSignedPercent(entry.result.ccReturn - entry.result.bhReturn),
+          rollDescription,
+          options,
+        };
+      }),
+    [formatSignedPercent, formatStrategyLabel, getStrategyColor, strategies],
+  );
 
   return (
     <React.Fragment>
@@ -1090,6 +1159,41 @@ export function BacktestResults({
               {card.footnote && <div className="mt-auto text-xs text-slate-400">{card.footnote}</div>}
             </div>
           ))}
+        </div>
+        <div className="mt-8 overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">策略</th>
+                <th className="px-4 py-3 text-right font-semibold">最終資產</th>
+                <th className="px-4 py-3 text-right font-semibold">總報酬</th>
+                <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
+                <th className="px-4 py-3 text-right font-semibold">勝率 / 次數</th>
+                <th className="px-4 py-3 text-right font-semibold">相對 Buy &amp; Hold</th>
+                <th className="px-4 py-3 font-semibold">Roll 策略</th>
+                <th className="px-4 py-3 font-semibold">進階選項</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {strategyComparisonRows.map(row => (
+                <tr key={row.id} className="bg-white/70 hover:bg-indigo-50/40">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
+                      <span className="font-medium text-slate-700">{row.label}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
+                  <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.winRate}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.relativeReturn}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.rollDescription}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.options}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
     </React.Fragment>

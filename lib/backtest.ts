@@ -199,7 +199,11 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
         const meetsDeltaTrigger = daysToExpiry > 2 && currentDelta >= rollDeltaTrigger;
-        const meetsScheduledRoll = scheduledRollOffset !== null && daysToExpiry === scheduledRollOffset;
+        let meetsScheduledRoll = false;
+        if (scheduledRollOffset !== null) {
+          const targetIndex = Math.max(openCall.sellIdx, openCall.expIdx - scheduledRollOffset);
+          meetsScheduledRoll = i >= targetIndex;
+        }
         if (meetsDeltaTrigger || meetsScheduledRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
