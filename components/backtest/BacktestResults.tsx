@@ -38,7 +38,13 @@ const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   );
 };
 
-const RollMarkerLabel = ({ viewBox, x }: { viewBox?: { x?: number; y?: number; width?: number; height?: number }; x?: number }) => {
+const RollMarkerLabel = ({
+  viewBox,
+  x,
+}: {
+  viewBox?: { x?: number; y?: number; width?: number; height?: number };
+  x?: number;
+}) => {
   if (!viewBox && typeof x !== 'number') return null;
   const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
   const chartTop = viewBox?.y ?? 0;
@@ -71,7 +77,7 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: { x?: number; y?: number; w
         opacity={0.95}
       />
       <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
-        Roll up &amp; out
+        Delta Roll-up
       </text>
     </g>
   );
@@ -406,7 +412,10 @@ export function BacktestResults({
   }, [activeBrushRange, chartLength, scrollerWidth]);
 
   const settlementPoints = useMemo(() => result.settlements ?? [], [result.settlements]);
-  const rollPoints = useMemo(() => settlementPoints.filter(point => point.type === 'roll'), [settlementPoints]);
+  const rollPoints = useMemo(
+    () => settlementPoints.filter(point => point.type === 'roll' && point.rollReason === 'delta'),
+    [settlementPoints],
+  );
   const expirationSettlements = useMemo(
     () => settlementPoints.filter(point => point.type === 'expiry' && point.qty > 0),
     [settlementPoints],
@@ -704,7 +713,7 @@ export function BacktestResults({
             {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
             {rollMarks.length > 0 && (
               <div className="rounded-lg bg-indigo-50/80 px-2 py-1 text-[11px] font-medium text-indigo-700">
-                本日有 Roll up &amp; out
+                Delta 閾值觸發 Roll-up
               </div>
             )}
             {settlement && (
@@ -721,7 +730,11 @@ export function BacktestResults({
                   )}
                   {typeof settlement.delta === 'number' && <div>Delta：{settlement.delta.toFixed(2)}</div>}
                   {settlement.type === 'roll' && (
-                    <div className="text-[11px] text-slate-500">已提前平倉並換至下一期合約</div>
+                    <div className="text-[11px] text-slate-500">
+                      {settlement.rollReason === 'delta'
+                        ? '因 Delta 達到設定閾值提前換倉'
+                        : '例行提前換倉至下一期合約'}
+                    </div>
                   )}
                 </div>
               </div>
@@ -787,7 +800,7 @@ export function BacktestResults({
       {
         label: '平均 Roll Delta',
         value: averageRollDelta ? averageRollDelta.toFixed(2) : '—',
-        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}`,
+        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}（僅統計 Delta 閾值觸發換倉）`,
       },
     ];
   }, [result.rollDeltaTrigger, result.rollEvents, summaryCards]);
