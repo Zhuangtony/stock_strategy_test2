@@ -1,5 +1,77 @@
 import { bsCallDelta, bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
 
+export type BacktestFrequency = 'weekly' | 'monthly';
+
+export type OhlcRow = {
+  date: string;
+  close: number;
+  adjClose: number;
+};
+
+export interface BacktestParams {
+  initialCapital: number;
+  shares: number;
+  r: number;
+  q: number;
+  targetDelta: number;
+  freq: BacktestFrequency;
+  ivOverride?: number | null;
+  reinvestPremium: boolean;
+  roundStrikeToInt: boolean;
+  skipEarningsWeek: boolean;
+  dynamicContracts: boolean;
+  enableRoll: boolean;
+  earningsDates?: string[];
+  rollDeltaThreshold?: number;
+  rollDaysBeforeExpiry?: number;
+}
+
+export interface SettlementEvent {
+  date: string;
+  totalValue: number;
+  pnl: number;
+  strike: number;
+  underlying: number;
+  premium: number;
+  qty: number;
+  type: 'roll' | 'expiry';
+  delta?: number;
+}
+
+export interface BacktestCurvePoint {
+  date: string;
+  BuyAndHold: number;
+  CoveredCall: number;
+  UnderlyingPrice: number;
+  CallStrike: number | null;
+  CallDelta: number | null;
+  settlement: null | {
+    pnl: number;
+    strike: number;
+    underlying: number;
+    premium: number;
+    qty: number;
+    type: 'roll' | 'expiry';
+    delta?: number;
+  };
+}
+
+export interface RunBacktestResult {
+  curve: BacktestCurvePoint[];
+  bhReturn: number;
+  ccReturn: number;
+  hv: number;
+  ivUsed: number;
+  bhShares: number;
+  ccShares: number;
+  settlements: SettlementEvent[];
+  rollEvents: SettlementEvent[];
+  ccWinRate: number;
+  ccSettlementCount: number;
+  effectiveTargetDelta: number;
+  rollDeltaTrigger: number;
+}
+
 function getISOWeek(date: Date) {
   const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = tmp.getUTCDay() || 7;
@@ -8,7 +80,7 @@ function getISOWeek(date: Date) {
   return Math.ceil((((tmp.valueOf() - yearStart.valueOf()) / 86400000) + 1) / 7);
 }
 
-export function generateCycleBoundaries(dates: string[], freq: 'weekly' | 'monthly') {
+export function generateCycleBoundaries(dates: string[], freq: BacktestFrequency) {
   const boundaries: number[] = [];
   if (dates.length === 0) return boundaries;
   const dObjs = dates.map(d => new Date(d + 'T00:00:00Z'));
@@ -37,26 +109,7 @@ export function generateCycleBoundaries(dates: string[], freq: 'weekly' | 'month
   return boundaries;
 }
 
-export function runBacktest(
-  ohlc: { date: string; close: number; adjClose: number }[],
-  params: {
-    initialCapital: number;
-    shares: number;
-    r: number;
-    q: number;
-    targetDelta: number;
-    freq: 'weekly' | 'monthly';
-    ivOverride?: number | null;
-    reinvestPremium: boolean;
-    roundStrikeToInt: boolean;
-    skipEarningsWeek: boolean;
-    dynamicContracts: boolean;
-    enableRoll: boolean;
-    earningsDates?: string[];
-    rollDeltaThreshold?: number;
-    rollDaysBeforeExpiry?: number;
-  },
-) {
+export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktestResult {
   const dates = ohlc.map(d => d.date);
   const prices = ohlc.map(d => d.adjClose ?? d.close);
   const hv = estimateHV(prices);
