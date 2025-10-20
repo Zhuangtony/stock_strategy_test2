@@ -229,8 +229,22 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             rollEvents.push({ ...rollRecord, rollReason: 'delta' });
           }
 
-          let newExpIdx = Math.min(prices.length - 1, openCall.expIdx + 5);
-          if (newExpIdx <= i) newExpIdx = Math.min(prices.length - 1, i + 1);
+          const originalHorizon = Math.max(1, openCall.expIdx - openCall.sellIdx + 1);
+          let newExpIdx = openCall.expIdx;
+          for (let b = 0; b < boundaries.length; b += 2) {
+            const cycleStart = boundaries[b];
+            const cycleEnd = boundaries[b + 1];
+            if (cycleStart > openCall.expIdx) {
+              newExpIdx = cycleEnd;
+              break;
+            }
+          }
+          if (newExpIdx <= openCall.expIdx) {
+            newExpIdx = Math.min(prices.length - 1, Math.max(i + 1, i + originalHorizon));
+          }
+          if (newExpIdx <= i) {
+            newExpIdx = Math.min(prices.length - 1, i + 1);
+          }
           const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
           let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
           if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
