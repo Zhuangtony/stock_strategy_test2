@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normCDF, bsCallPrice, bsCallDelta, findStrikeForTargetDelta, estimateHV } from '../lib/optionMath';
-import { generateCycleBoundaries, runBacktest } from '../lib/backtest';
+import { generateCycleBoundaries, runBacktest, type BacktestParams } from '../lib/backtest';
 
 describe('math/option helpers', () => {
   it('normCDF is within [0,1] and symmetric-ish', () => {
@@ -35,12 +35,15 @@ describe('math/option helpers', () => {
     expect(Math.abs(d - target)).toBeLessThan(0.02);
   });
 
-  it('cycle boundaries weekly/monthly produce pairs', () => {
-    const dates = ['2024-12-30','2024-12-31','2025-01-02','2025-01-03','2025-01-06','2025-01-07'];
-    const w = generateCycleBoundaries(dates, 'weekly');
-    const m = generateCycleBoundaries(dates, 'monthly');
-    expect(w.length % 2).toBe(0);
-    expect(m.length % 2).toBe(0);
+  it('cycle boundaries weekly/monthly produce ordered pairs and handle year crossover', () => {
+    const dates = ['2024-12-30', '2024-12-31', '2025-01-02', '2025-01-03', '2025-01-06', '2025-01-07'];
+    const weekly = generateCycleBoundaries(dates, 'weekly');
+    const monthly = generateCycleBoundaries(dates, 'monthly');
+    expect(weekly.length % 2).toBe(0);
+    expect(monthly.length % 2).toBe(0);
+    expect(weekly[0]).toBe(0);
+    expect(weekly[1]).toBe(1);
+    expect(monthly[2]).toBe(2);
   });
 
   it('HV returns a sane positive value', () => {
@@ -50,6 +53,24 @@ describe('math/option helpers', () => {
     expect(hv).toBeLessThan(2);
   });
 
+  const baseParams: BacktestParams = {
+    initialCapital: 0,
+    shares: 100,
+    r: 0.03,
+    q: 0,
+    targetDelta: 0.3,
+    freq: 'weekly',
+    ivOverride: 0.3,
+    reinvestPremium: true,
+    roundStrikeToInt: true,
+    skipEarningsWeek: false,
+    dynamicContracts: true,
+    enableRoll: true,
+    earningsDates: [],
+    rollDeltaThreshold: 0.7,
+    rollDaysBeforeExpiry: 0,
+  };
+
   it('backtest produces curves and summary', () => {
     const rows = [
       { date: '2025-01-02', close: 100, adjClose: 100 },
@@ -57,11 +78,42 @@ describe('math/option helpers', () => {
       { date: '2025-01-06', close: 99, adjClose: 99 },
       { date: '2025-01-07', close: 100, adjClose: 100 },
       { date: '2025-01-08', close: 102, adjClose: 102 },
-      { date: '2025-01-09', close: 104, adjClose: 104 }
+      { date: '2025-01-09', close: 104, adjClose: 104 },
     ];
-    const res = runBacktest(rows as any, { initialCapital: 0, shares: 100, r: 0.03, q: 0, targetDelta: 0.3, freq: 'weekly', ivOverride: 0.3, reinvestPremium: true });
+    const res = runBacktest(rows, baseParams);
     expect(res.curve.length).toBe(rows.length);
     expect(Number.isFinite(res.hv)).toBe(true);
     expect(Number.isFinite(res.ivUsed)).toBe(true);
+    expect(res.settlements.length).toBeGreaterThan(0);
+  });
+
+  it('skips opening positions during earnings week when configured', () => {
+    const rows = [
+      { date: '2024-01-02', close: 100, adjClose: 100 },
+      { date: '2024-01-03', close: 101, adjClose: 101 },
+      { date: '2024-01-04', close: 102, adjClose: 102 },
+      { date: '2024-01-05', close: 103, adjClose: 103 },
+      { date: '2024-01-08', close: 104, adjClose: 104 },
+      { date: '2024-01-09', close: 105, adjClose: 105 },
+      { date: '2024-01-10', close: 106, adjClose: 106 },
+      { date: '2024-01-11', close: 107, adjClose: 107 },
+    ];
+    const normal = runBacktest(rows, { ...baseParams, earningsDates: [] });
+    const skipped = runBacktest(rows, { ...baseParams, skipEarningsWeek: true, earningsDates: ['2024-01-04'] });
+    const firstWeekStrikeNormal = normal.curve.slice(0, 4).some(point => typeof point.CallStrike === 'number');
+    const firstWeekStrikeSkipped = skipped.curve.slice(0, 4).some(point => typeof point.CallStrike === 'number');
+    expect(firstWeekStrikeNormal).toBe(true);
+    expect(firstWeekStrikeSkipped).toBe(false);
+  });
+
+  it('schedules roll events when delta threshold is reached', () => {
+    const rows: { date: string; close: number; adjClose: number }[] = [];
+    let price = 100;
+    for (let i = 0; i < 40; i++) {
+      price += i < 20 ? 1.5 : -0.5;
+      rows.push({ date: `2024-02-${String(i + 1).padStart(2, '0')}`, close: price, adjClose: price });
+    }
+    const res = runBacktest(rows, { ...baseParams, enableRoll: true, rollDeltaThreshold: 0.55 });
+    expect(res.rollEvents.length).toBeGreaterThan(0);
   });
 });
