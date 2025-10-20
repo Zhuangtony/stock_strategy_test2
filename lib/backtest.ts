@@ -187,7 +187,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     qty: number;
     type: 'roll';
     delta?: number;
-    rollReason: 'delta';
+    rollReason: 'delta' | 'scheduled';
   }[] = [];
 
   for (let i = 0; i < prices.length; i++) {

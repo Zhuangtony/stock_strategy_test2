@@ -25,6 +25,15 @@ import type { BacktestCurvePoint, RunBacktestResult } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { ComparisonDeltaInput, ComparisonResultEntry } from './types';
 
+const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+const formatDateWithWeekday = (value: string) => {
+  if (!value) return value;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const weekday = weekdayFormatter.format(parsed);
+  return `${value} (${weekday})`;
+};
+
 const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   const { cx, cy } = props as DotProps;
   if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
@@ -149,6 +158,30 @@ export function BacktestResults({
   });
   const [isScrollerDragging, setIsScrollerDragging] = useState(false);
 
+  const handleEnterFullscreen = useCallback(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    setIsFullscreen(true);
+    if (container.requestFullscreen) {
+      container.requestFullscreen().catch(() => {
+        // Fallback to CSS-based fullscreen if API request fails
+        setIsFullscreen(true);
+      });
+    }
+  }, []);
+
+  const handleExitFullscreen = useCallback(() => {
+    const exit = () => setIsFullscreen(false);
+    if (document.fullscreenElement) {
+      document
+        .exitFullscreen()
+        .then(exit)
+        .catch(exit);
+    } else {
+      exit();
+    }
+  }, []);
+
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
       { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
@@ -271,9 +304,24 @@ export function BacktestResults({
 
   useEffect(() => {
     if (!result) {
-      setIsFullscreen(false);
+      handleExitFullscreen();
     }
-  }, [result]);
+  }, [handleExitFullscreen, result]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const element = document.fullscreenElement;
+      if (!element || element !== chartContainerRef.current) {
+        setIsFullscreen(false);
+      } else {
+        setIsFullscreen(true);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
 
   useEffect(() => {
     const track = scrollerTrackRef.current;
@@ -333,14 +381,14 @@ export function BacktestResults({
     if (!isFullscreen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsFullscreen(false);
+        handleExitFullscreen();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isFullscreen]);
+  }, [handleExitFullscreen, isFullscreen]);
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -413,8 +461,12 @@ export function BacktestResults({
 
   const settlementPoints = useMemo(() => result.settlements ?? [], [result.settlements]);
   const rollPoints = useMemo(
-    () => settlementPoints.filter(point => point.type === 'roll' && point.rollReason === 'delta'),
+    () => settlementPoints.filter(point => point.type === 'roll'),
     [settlementPoints],
+  );
+  const deltaRollPoints = useMemo(
+    () => rollPoints.filter(point => (point.rollReason ?? 'delta') === 'delta'),
+    [rollPoints],
   );
   const expirationSettlements = useMemo(
     () => settlementPoints.filter(point => point.type === 'expiry' && point.qty > 0),
@@ -695,6 +747,10 @@ export function BacktestResults({
 
   const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), []);
   const formatPriceTick = useCallback((value: number) => value.toFixed(2), []);
+  const formatDateTick = useCallback((value: string | number) => {
+    if (typeof value !== 'string') return String(value ?? '');
+    return formatDateWithWeekday(value);
+  }, []);
 
   const CustomTooltip = useCallback(
     ({ active, payload, label }: TooltipProps<number, string>) => {
@@ -703,17 +759,25 @@ export function BacktestResults({
       const settlement = point.settlement;
       const callDelta = point.CallDelta;
       const rollMarks = rollPoints.filter(event => event.date === point.date);
+      const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
+      const scheduledRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'scheduled');
+      const formattedLabel = typeof label === 'string' ? formatDateWithWeekday(label) : label;
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
-          <div className="text-sm font-semibold text-slate-900">{label}</div>
+          <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
           <div className="mt-2 space-y-1">
             <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
             <div>Covered Call：{formatCurrency(point.CoveredCall)}</div>
             <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
             {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
-            {rollMarks.length > 0 && (
+            {deltaRollMarks.length > 0 && (
               <div className="rounded-lg bg-indigo-50/80 px-2 py-1 text-[11px] font-medium text-indigo-700">
                 Delta 閾值觸發 Roll-up
+              </div>
+            )}
+            {scheduledRollMarks.length > 0 && (
+              <div className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+                例行換倉（Roll-out）
               </div>
             )}
             {settlement && (
@@ -791,10 +855,11 @@ export function BacktestResults({
   }, [result]);
 
   const summaryCardsWithRoll = useMemo(() => {
-    if (!result.rollEvents.length) return summaryCards;
+    const deltaRollEvents = result.rollEvents.filter(event => (event.rollReason ?? 'delta') === 'delta');
+    if (!deltaRollEvents.length) return summaryCards;
     const averageRollDelta =
-      result.rollEvents.reduce((acc, cur) => acc + (typeof cur.delta === 'number' ? cur.delta : 0), 0) /
-      Math.max(1, result.rollEvents.length);
+      deltaRollEvents.reduce((acc, cur) => acc + (typeof cur.delta === 'number' ? cur.delta : 0), 0) /
+      Math.max(1, deltaRollEvents.length);
     return [
       ...summaryCards,
       {
@@ -873,7 +938,7 @@ export function BacktestResults({
               )}
               <button
                 type="button"
-                onClick={() => setIsFullscreen(true)}
+                onClick={handleEnterFullscreen}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 transition hover:bg-indigo-50"
               >
                 全螢幕
@@ -893,7 +958,12 @@ export function BacktestResults({
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={renderedData} margin={chartMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
-                <XAxis dataKey="date" tick={{ fontSize: 12, fontWeight: 600 }} minTickGap={30} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  minTickGap={30}
+                  tickFormatter={formatDateTick}
+                />
                 <YAxis
                   yAxisId="value"
                   tick={{ fontSize: 12, fontWeight: 600 }}
@@ -927,7 +997,7 @@ export function BacktestResults({
                     connectNulls
                   />
                 ))}
-                {rollPoints.map((point, idx) => (
+                {deltaRollPoints.map((point, idx) => (
                   <ReferenceLine
                     key={`roll-${point.date}-${idx}`}
                     x={point.date}
@@ -970,7 +1040,7 @@ export function BacktestResults({
             </div>
             <button
               type="button"
-              onClick={() => setIsFullscreen(false)}
+              onClick={handleExitFullscreen}
               className={`${
                 isFullscreen ? 'absolute right-6 top-6 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-slate-600 shadow-lg shadow-indigo-200 transition hover:bg-indigo-50' : 'hidden'
               }`}
