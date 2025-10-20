@@ -2,9 +2,14 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { BacktestResults } from '../components/backtest/BacktestResults';
-import { ComparisonDeltaManager } from '../components/backtest/ComparisonDeltaManager';
-import { createDeltaId, type ComparisonDeltaInput, type ComparisonResultEntry } from '../components/backtest/types';
-import { runBacktest, type BacktestParams, type RunBacktestResult } from '../lib/backtest';
+import { StrategyConfigManager } from '../components/backtest/StrategyConfigManager';
+import {
+  cloneStrategyConfig,
+  createStrategyConfig,
+  type StrategyConfigInput,
+  type StrategyRunResult,
+} from '../components/backtest/types';
+import { runBacktest, type BacktestParams } from '../lib/backtest';
 
 async function fetchYahooDailyViaApi(ticker: string, start: string, end: string) {
   const u = `/api/yahoo?symbol=${encodeURIComponent(ticker)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
@@ -29,23 +34,16 @@ export default function Page() {
   const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [initialCapital, setInitialCapital] = useState(0);
   const [shares, setShares] = useState(100);
-  const [targetDelta, setTargetDelta] = useState(0.3);
   const [freq, setFreq] = useState<BacktestParams['freq']>('weekly');
   const [ivOverride, setIvOverride] = useState<number | null>(null);
-  const [reinvestPremium, setReinvestPremium] = useState(true);
-  const [roundStrikeToInt, setRoundStrikeToInt] = useState(true);
-  const [skipEarningsWeek, setSkipEarningsWeek] = useState(false);
-  const [dynamicContracts, setDynamicContracts] = useState(true);
-  const [enableRoll, setEnableRoll] = useState(true);
-  const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.7);
-  const [rollDaysBeforeExpiry, setRollDaysBeforeExpiry] = useState(0);
   const [riskFreeRate, setRiskFreeRate] = useState(0.03);
   const [dividendYield, setDividendYield] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<RunBacktestResult | null>(null);
-  const [comparisonDeltas, setComparisonDeltas] = useState<ComparisonDeltaInput[]>([]);
-  const [comparisonResults, setComparisonResults] = useState<ComparisonResultEntry[]>([]);
+  const [strategyConfigs, setStrategyConfigs] = useState<StrategyConfigInput[]>(() => [
+    createStrategyConfig({ label: '策略 1' }),
+  ]);
+  const [strategyResults, setStrategyResults] = useState<StrategyRunResult[]>([]);
 
   const trimmedTicker = useMemo(() => ticker.trim().toUpperCase(), [ticker]);
 
@@ -53,37 +51,88 @@ export default function Page() {
     if (!trimmedTicker) return '請輸入股票代號';
     if (!start || !end) return '請選擇完整的日期範圍';
     if (start > end) return '結束日期需晚於開始日期';
-    if (!Number.isFinite(targetDelta) || targetDelta < 0.1 || targetDelta > 0.6) return '目標 Delta 建議介於 0.10 ~ 0.60';
     if (shares <= 0 && initialCapital <= 0) return '請至少設定初始資金或持有股數（兩者其一即可）';
     if (!Number.isFinite(riskFreeRate) || riskFreeRate < -0.05 || riskFreeRate > 0.5)
       return '無風險利率請介於 -5% 至 50% 之間';
     if (!Number.isFinite(dividendYield) || dividendYield < 0 || dividendYield > 0.4)
       return '股利殖利率請介於 0% 至 40%';
+    if (!strategyConfigs.length) return '請至少新增一組策略設定';
+    for (let i = 0; i < strategyConfigs.length; i++) {
+      const config = strategyConfigs[i];
+      const name = config.label.trim() || `策略 ${i + 1}`;
+      if (!Number.isFinite(config.targetDelta) || config.targetDelta < 0.1 || config.targetDelta > 0.6) {
+        return `${name} 的 Delta 需介於 0.10 ~ 0.60`;
+      }
+      if (config.enableRoll) {
+        if (
+          !Number.isFinite(config.rollDeltaThreshold) ||
+          config.rollDeltaThreshold < 0.3 ||
+          config.rollDeltaThreshold > 0.95
+        ) {
+          return `${name} 的 Roll 閾值需介於 0.30 ~ 0.95`;
+        }
+        if (
+          !Number.isFinite(config.rollDaysBeforeExpiry) ||
+          config.rollDaysBeforeExpiry < 0 ||
+          config.rollDaysBeforeExpiry > 4
+        ) {
+          return `${name} 的提前換倉日需介於 0 ~ 4`;
+        }
+      }
+    }
     return null;
-  }, [dividendYield, end, initialCapital, riskFreeRate, shares, start, targetDelta, trimmedTicker]);
+  }, [
+    dividendYield,
+    initialCapital,
+    riskFreeRate,
+    shares,
+    start,
+    strategyConfigs,
+    trimmedTicker,
+    end,
+  ]);
 
-  const handleAddComparisonDelta = useCallback(() => {
-    setComparisonDeltas(prev => {
-      const lastValue = prev.length > 0 ? prev[prev.length - 1].value : targetDelta;
-      const suggested = lastValue + 0.05;
-      const clamped = clampDelta(Math.max(0.1, Math.min(0.6, suggested)));
-      const nextValue = Number(clamped.toFixed(2));
-      const id = createDeltaId();
-      setComparisonResults(prevResults => [...prevResults, { id, value: nextValue, result: null }]);
-      return [...prev, { id, value: nextValue }];
+  const handleAddStrategy = useCallback(() => {
+    setStrategyConfigs(prev => {
+      const template = prev.length ? prev[prev.length - 1] : createStrategyConfig({ label: '策略 1' });
+      const nextLabel = `策略 ${prev.length + 1}`;
+      const cloned = cloneStrategyConfig(template, { label: nextLabel });
+      return [...prev, cloned];
     });
-  }, [targetDelta]);
-
-  const handleComparisonDeltaChange = useCallback((id: string, value: number) => {
-    const clamped = Math.max(0.1, Math.min(0.6, value));
-    const nextValue = Number(clamped.toFixed(2));
-    setComparisonDeltas(prev => prev.map(item => (item.id === id ? { ...item, value: nextValue } : item)));
-    setComparisonResults(prev => prev.map(item => (item.id === id ? { ...item, value: nextValue, result: null } : item)));
   }, []);
 
-  const handleRemoveComparisonDelta = useCallback((id: string) => {
-    setComparisonDeltas(prev => prev.filter(item => item.id !== id));
-    setComparisonResults(prev => prev.filter(item => item.id !== id));
+  const handleStrategyChange = useCallback(
+    (id: string, patch: Partial<Omit<StrategyConfigInput, 'id'>>) => {
+      setStrategyConfigs(prevConfigs =>
+        prevConfigs.map(config => {
+          if (config.id !== id) return config;
+          const next: StrategyConfigInput = { ...config, ...patch };
+          if (typeof patch.targetDelta === 'number') {
+            const clamped = clampDelta(Math.max(0.1, Math.min(0.6, patch.targetDelta)));
+            next.targetDelta = Number(clamped.toFixed(2));
+          }
+          if (typeof patch.rollDeltaThreshold === 'number') {
+            const clamped = Math.max(0.3, Math.min(0.95, patch.rollDeltaThreshold));
+            next.rollDeltaThreshold = Number(clamped.toFixed(2));
+          }
+          if (typeof patch.rollDaysBeforeExpiry === 'number') {
+            next.rollDaysBeforeExpiry = Math.max(0, Math.min(4, Math.round(patch.rollDaysBeforeExpiry)));
+          }
+          if (typeof patch.label === 'string') {
+            next.label = patch.label.slice(0, 40);
+          }
+          return next;
+        }),
+      );
+    },
+    [],
+  );
+
+  const handleRemoveStrategy = useCallback((id: string) => {
+    setStrategyConfigs(prev => {
+      if (prev.length <= 1) return prev;
+      return prev.filter(item => item.id !== id);
+    });
   }, []);
 
   const run = useCallback(async () => {
@@ -95,71 +144,75 @@ export default function Page() {
 
     setBusy(true);
     setError(null);
-    setResult(null);
-    setComparisonResults(prev => prev.map(item => ({ ...item, result: null })));
+    setStrategyResults([]);
 
     try {
       const payload = await fetchYahooDailyViaApi(trimmedTicker, start, end);
       if (payload.rows.length < 30) throw new Error('資料太少，請擴大日期範圍');
 
-      const params: BacktestParams = {
-        initialCapital,
-        shares,
-        r: riskFreeRate,
-        q: dividendYield,
-        targetDelta,
-        freq,
-        ivOverride,
-        reinvestPremium,
-        roundStrikeToInt,
-        skipEarningsWeek,
-        dynamicContracts,
-        enableRoll,
-        rollDeltaThreshold,
-        rollDaysBeforeExpiry,
-        earningsDates: payload.earningsDates,
-      };
+      const results: StrategyRunResult[] = strategyConfigs.map(config => {
+        const params: BacktestParams = {
+          initialCapital,
+          shares,
+          r: riskFreeRate,
+          q: dividendYield,
+          freq,
+          ivOverride,
+          earningsDates: payload.earningsDates,
+          reinvestPremium: config.reinvestPremium,
+          roundStrikeToInt: config.roundStrikeToInt,
+          skipEarningsWeek: config.skipEarningsWeek,
+          dynamicContracts: config.dynamicContracts,
+          enableRoll: config.enableRoll,
+          targetDelta: config.targetDelta,
+          rollDeltaThreshold: config.enableRoll ? config.rollDeltaThreshold : undefined,
+          rollDaysBeforeExpiry: config.enableRoll ? config.rollDaysBeforeExpiry : undefined,
+        };
+        return {
+          id: config.id,
+          label: config.label,
+          config,
+          params,
+          result: runBacktest(payload.rows, params),
+        };
+      });
 
-      const res = runBacktest(payload.rows, params);
-      const extra = comparisonDeltas.map(deltaInput => ({
-        id: deltaInput.id,
-        value: deltaInput.value,
-        result: runBacktest(payload.rows, {
-          ...params,
-          targetDelta: deltaInput.value,
-        }),
-      }));
-      setResult(res);
-      setComparisonResults(extra);
+      setStrategyResults(results);
     } catch (e: any) {
       setError(e.message || String(e));
     } finally {
       setBusy(false);
     }
   }, [
-    comparisonDeltas,
     dividendYield,
-    dynamicContracts,
-    enableRoll,
     end,
     freq,
     initialCapital,
     ivOverride,
-    reinvestPremium,
     riskFreeRate,
-    rollDaysBeforeExpiry,
-    rollDeltaThreshold,
-    roundStrikeToInt,
     shares,
-    skipEarningsWeek,
     start,
-    targetDelta,
+    strategyConfigs,
     trimmedTicker,
     validationError,
   ]);
 
-  const summaryCards = useMemo(
-    () => [
+  const summaryCards = useMemo(() => {
+    const primaryConfig = strategyConfigs[0];
+    const rollFootnote = primaryConfig
+      ? primaryConfig.enableRoll
+        ? `Roll 閾值：${primaryConfig.rollDeltaThreshold.toFixed(2)} · ${
+            primaryConfig.rollDaysBeforeExpiry === 0
+              ? '到期日換倉'
+              : `到期前 ${primaryConfig.rollDaysBeforeExpiry} 個交易日`
+          }`
+        : '已停用自動 Roll'
+      : '—';
+    const strategyLabel = primaryConfig
+      ? `Δ ${primaryConfig.targetDelta.toFixed(2)} · ${freq === 'weekly' ? '每週換倉' : '每月換倉'}`
+      : `${freq === 'weekly' ? '每週換倉' : '每月換倉'}`;
+
+    return [
       {
         label: '資料期間',
         value: `${start} → ${end}`,
@@ -177,17 +230,16 @@ export default function Page() {
       },
       {
         label: '策略參數',
-        value: `Δ ${targetDelta.toFixed(2)} · ${freq === 'weekly' ? '每週換倉' : '每月換倉'}`,
-        footnote: enableRoll ? `Roll 閾值：${rollDeltaThreshold.toFixed(2)}` : '已停用自動 Roll',
+        value: strategyLabel,
+        footnote: rollFootnote,
       },
       {
         label: '利率假設',
         value: `r=${(riskFreeRate * 100).toFixed(1)}% · q=${(dividendYield * 100).toFixed(1)}%`,
         footnote: '可依市場狀況調整無風險利率與股利殖利率',
       },
-    ],
-    [dividendYield, enableRoll, end, freq, initialCapital, riskFreeRate, rollDeltaThreshold, shares, start, targetDelta],
-  );
+    ];
+  }, [dividendYield, end, freq, initialCapital, riskFreeRate, shares, start, strategyConfigs]);
 
   const runDisabled = busy || Boolean(validationError);
 
@@ -262,27 +314,6 @@ export default function Page() {
               />
             </label>
             <label className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span>目標 Delta</span>
-                <span className="text-xs text-slate-500">{targetDelta.toFixed(2)}</span>
-              </div>
-              <input
-                type="range"
-                min={0.1}
-                max={0.6}
-                step={0.01}
-                value={targetDelta}
-                onChange={e => setTargetDelta(Number(e.target.value))}
-                className="accent-indigo-500"
-              />
-            </label>
-            <ComparisonDeltaManager
-              deltas={comparisonDeltas}
-              onAdd={handleAddComparisonDelta}
-              onChange={handleComparisonDeltaChange}
-              onRemove={handleRemoveComparisonDelta}
-            />
-            <label className="space-y-2">
               <div className="text-sm">換倉頻率</div>
               <select
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -331,116 +362,12 @@ export default function Page() {
               />
               <p className="text-xs text-slate-500">預設為 0（無股利）。</p>
             </label>
-            <label className="mt-6 flex items-center gap-3 rounded-2xl bg-slate-50/80 px-4 py-3">
-              <input
-                type="checkbox"
-                checked={reinvestPremium}
-                onChange={e => setReinvestPremium(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span className="text-sm">權利金滾入再投資 (買股)</span>
-            </label>
-            <div className="grid gap-3 text-sm md:col-span-3 md:grid-cols-2 xl:grid-cols-4">
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
-                <input
-                  type="checkbox"
-                  checked={roundStrikeToInt}
-                  onChange={e => setRoundStrikeToInt(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>Call 履約價取整數</span>
-              </label>
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
-                <input
-                  type="checkbox"
-                  checked={skipEarningsWeek}
-                  onChange={e => setSkipEarningsWeek(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>跳過財報週 (不賣 Call)</span>
-              </label>
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
-                <input
-                  type="checkbox"
-                  checked={dynamicContracts}
-                  onChange={e => setDynamicContracts(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>合約張數依持股動態調整</span>
-              </label>
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3 shadow-sm">
-                <input
-                  type="checkbox"
-                  checked={enableRoll}
-                  onChange={e => setEnableRoll(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>Delta 觸價時 Roll up &amp; out</span>
-              </label>
-            </div>
-            {enableRoll && (
-              <div className="md:col-span-3 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 text-xs md:text-sm">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <span className="font-semibold text-indigo-900">Roll Delta 閾值： {rollDeltaThreshold.toFixed(2)}</span>
-                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
-                    <input
-                      type="range"
-                      min={0.3}
-                      max={0.95}
-                      step={0.01}
-                      value={rollDeltaThreshold}
-                      onChange={e => setRollDeltaThreshold(clampDelta(Number(e.target.value)))}
-                      className="flex-1 accent-indigo-500"
-                    />
-                    <input
-                      type="number"
-                      min={0.3}
-                      max={0.95}
-                      step={0.01}
-                      value={rollDeltaThreshold}
-                      onChange={e => {
-                        const next = Number(e.target.value);
-                        if (!Number.isFinite(next)) return;
-                        setRollDeltaThreshold(clampDelta(next));
-                      }}
-                      className="w-24 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-right shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <span className="font-semibold text-indigo-900">
-                    預設換倉日：到期前 {rollDaysBeforeExpiry + 1} 天
-                  </span>
-                  <div className="flex flex-1 items-center gap-3 md:max-w-md">
-                    <input
-                      type="range"
-                      min={0}
-                      max={4}
-                      step={1}
-                      value={rollDaysBeforeExpiry}
-                      onChange={e => setRollDaysBeforeExpiry(Math.max(0, Math.min(4, Number(e.target.value))))}
-                      className="flex-1 accent-indigo-500"
-                    />
-                    <input
-                      type="number"
-                      min={0}
-                      max={4}
-                      step={1}
-                      value={rollDaysBeforeExpiry}
-                      onChange={e => {
-                        const next = Number(e.target.value);
-                        if (!Number.isFinite(next)) return;
-                        setRollDaysBeforeExpiry(Math.max(0, Math.min(4, Math.round(next))));
-                      }}
-                      className="w-24 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-right shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    />
-                  </div>
-                </div>
-                <p className="text-[11px] leading-relaxed text-indigo-900/70 md:text-xs">
-                  Delta 達到閾值時會執行 Roll up &amp; out；亦可設定固定換倉日前（最多提前 5 天）。
-                </p>
-              </div>
-            )}
+            <StrategyConfigManager
+              configs={strategyConfigs}
+              onAdd={handleAddStrategy}
+              onChange={handleStrategyChange}
+              onRemove={handleRemoveStrategy}
+            />
             <div className="md:col-span-3 flex flex-col gap-3">
               <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                 {summaryCards.map(card => (
@@ -467,11 +394,9 @@ export default function Page() {
           </div>
         </section>
 
-        {result ? (
+        {strategyResults.length > 0 ? (
           <BacktestResults
-            result={result}
-            comparisonDeltas={comparisonDeltas}
-            comparisonResults={comparisonResults}
+            strategies={strategyResults}
             ticker={trimmedTicker}
             start={start}
             end={end}
@@ -485,7 +410,7 @@ export default function Page() {
               比較 Buy &amp; Hold 與 Covered Call 策略的資產變化。
             </p>
             <p className="text-sm leading-7">
-              可調整賣方 Delta、換倉頻率與是否將權利金再投資；亦可覆寫 IV、設定利率假設，或新增多組 Delta 用於比較。
+              可調整賣方 Delta、換倉頻率與是否將權利金再投資；亦可覆寫 IV、設定利率假設，或新增多組策略組合並與 Buy &amp; Hold 同場比較。
             </p>
           </section>
         )}
