@@ -38,8 +38,16 @@ const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   const { cx, cy } = props as DotProps;
   if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
   const settlement = (props as any)?.payload?.settlement;
-  if (!settlement || settlement.type !== 'expiry') return <g />;
+  if (!settlement || (settlement.type !== 'expiry' && settlement.type !== 'roll')) return <g />;
   const color = settlement.pnl >= 0 ? '#22c55e' : '#ef4444';
+  if (settlement.type === 'roll') {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={7} fill="#ffffff" stroke={color} strokeWidth={2} />
+        <circle cx={cx} cy={cy} r={3.5} fill={color} />
+      </g>
+    );
+  }
   return (
     <g>
       <circle cx={cx} cy={cy} r={6} fill={color} stroke="white" strokeWidth={1.5} />
@@ -149,6 +157,9 @@ export function BacktestResults({
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerTrackRef = useRef<HTMLDivElement | null>(null);
+  const attachScrollerTrack = useCallback((node: HTMLDivElement | null) => {
+    scrollerTrackRef.current = node;
+  }, []);
   const [scrollerWidth, setScrollerWidth] = useState(0);
   const scrollerDragState = useRef<{ pointerId: number | null; offset: number; active: boolean; element: HTMLElement | null }>({
     pointerId: null,
@@ -728,7 +739,7 @@ export function BacktestResults({
         const ratio = delta / rect.width;
         const windowSize = initialRange.endIndex - initialRange.startIndex + 1;
         if (windowSize >= chartLength) return;
-        let startIndex = Math.round(initialRange.startIndex - ratio * chartLength);
+        let startIndex = Math.round(initialRange.startIndex + ratio * chartLength);
         startIndex = Math.max(0, Math.min(chartLength - windowSize, startIndex));
         const endIndex = Math.min(chartLength - 1, startIndex + windowSize - 1);
         setBrushRange({ startIndex, endIndex });
@@ -751,6 +762,47 @@ export function BacktestResults({
     if (typeof value !== 'string') return String(value ?? '');
     return formatDateWithWeekday(value);
   }, []);
+
+  const renderScrollerTrack = useCallback(
+    () => (
+      <div
+        ref={attachScrollerTrack}
+        className="relative h-3 w-full select-none rounded-full bg-slate-200/70 shadow-inner shadow-slate-300/40 touch-none cursor-pointer"
+        onPointerDown={handleTrackPointerDown}
+        onPointerMove={handleScrollerPointerMove}
+        onPointerUp={handleScrollerPointerUp}
+        onPointerCancel={handleScrollerPointerCancel}
+      >
+        {scrollerMetrics.hasWindow ? (
+          <div
+            className={`absolute top-0 h-full rounded-full bg-indigo-400/80 transition-[background-color] duration-150 hover:bg-indigo-400 touch-none ${
+              isScrollerDragging ? 'cursor-grabbing' : 'cursor-grab'
+            }`}
+            style={{
+              width: `${scrollerMetrics.thumbWidth}px`,
+              transform: `translateX(${scrollerMetrics.thumbPosition}px)`,
+            }}
+            onPointerDown={handleThumbPointerDown}
+            onPointerMove={handleScrollerPointerMove}
+            onPointerUp={handleScrollerPointerUp}
+            onPointerCancel={handleScrollerPointerCancel}
+          />
+        ) : (
+          <div className="absolute top-0 h-full w-full rounded-full bg-slate-300/60" />
+        )}
+      </div>
+    ),
+    [
+      attachScrollerTrack,
+      handleScrollerPointerCancel,
+      handleScrollerPointerMove,
+      handleScrollerPointerUp,
+      handleThumbPointerDown,
+      handleTrackPointerDown,
+      isScrollerDragging,
+      scrollerMetrics,
+    ],
+  );
 
   const CustomTooltip = useCallback(
     ({ active, payload, label }: TooltipProps<number, string>) => {
@@ -1010,34 +1062,7 @@ export function BacktestResults({
                 ))}
               </LineChart>
             </ResponsiveContainer>
-            <div className="mt-4">
-              <div
-                ref={scrollerTrackRef}
-                className="relative h-3 w-full select-none rounded-full bg-slate-200/70 shadow-inner shadow-slate-300/40 touch-none cursor-pointer"
-                onPointerDown={handleTrackPointerDown}
-                onPointerMove={handleScrollerPointerMove}
-                onPointerUp={handleScrollerPointerUp}
-                onPointerCancel={handleScrollerPointerCancel}
-              >
-                {scrollerMetrics.hasWindow ? (
-                  <div
-                    className={`absolute top-0 h-full rounded-full bg-indigo-400/80 transition-[background-color] duration-150 hover:bg-indigo-400 touch-none ${
-                      isScrollerDragging ? 'cursor-grabbing' : 'cursor-grab'
-                    }`}
-                    style={{
-                      width: `${scrollerMetrics.thumbWidth}px`,
-                      transform: `translateX(${scrollerMetrics.thumbPosition}px)`,
-                    }}
-                    onPointerDown={handleThumbPointerDown}
-                    onPointerMove={handleScrollerPointerMove}
-                    onPointerUp={handleScrollerPointerUp}
-                    onPointerCancel={handleScrollerPointerCancel}
-                  />
-                ) : (
-                  <div className="absolute top-0 h-full w-full rounded-full bg-slate-300/60" />
-                )}
-              </div>
-            </div>
+            {isFullscreen && <div className="mt-4">{renderScrollerTrack()}</div>}
             <button
               type="button"
               onClick={handleExitFullscreen}
@@ -1050,6 +1075,7 @@ export function BacktestResults({
           </div>
         </ChartErrorBoundary>
       </section>
+      {!isFullscreen && <div className="mx-6 mt-4 md:mx-8">{renderScrollerTrack()}</div>}
 
       <section className={`${panelClass} p-6 md:p-8`}>
         <div className="mb-4 flex items-center justify-between gap-3">
