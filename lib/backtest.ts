@@ -227,7 +227,9 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             rollReason,
           };
           settlements.push(rollRecord);
-          rollEvents.push(rollRecord);
+          if (meetsDeltaTrigger) {
+            rollEvents.push({ ...rollRecord, rollReason: 'delta' });
+          }
 
           const originalHorizon = Math.max(1, openCall.expIdx - openCall.sellIdx + 1);
           let newExpIdx: number = openCall.expIdx;
