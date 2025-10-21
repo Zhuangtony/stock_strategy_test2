@@ -1156,6 +1156,26 @@ export function BacktestResults({
                 ))}
               </LineChart>
             </ResponsiveContainer>
+            <div className="pointer-events-none absolute right-4 top-4 z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs">
+              {seriesConfig.map(series => {
+                const active = seriesVisibility[series.key] ?? true;
+                const dashed = Boolean(series.strokeDasharray);
+                return (
+                  <div
+                    key={`legend-${series.key}`}
+                    className={`flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm backdrop-blur ${
+                      active ? '' : 'opacity-45'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-0 w-6 border-b-2 ${dashed ? 'border-dashed' : ''}`}
+                      style={{ borderColor: series.color }}
+                    />
+                    <span className="whitespace-nowrap">{series.label}</span>
+                  </div>
+                );
+              })}
+            </div>
             {isFullscreen && <div className="mt-4">{renderScrollerTrack()}</div>}
             <button
               type="button"
