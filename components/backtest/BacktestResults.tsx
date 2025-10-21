@@ -43,14 +43,14 @@ const createSettlementDotRenderer = (settlementKey: string): NonNullable<LinePro
   if (settlement.type === 'roll') {
     return (
       <g>
-        <circle cx={cx} cy={cy} r={7} fill="#ffffff" stroke={color} strokeWidth={2} />
-        <circle cx={cx} cy={cy} r={3.5} fill={color} />
+        <circle cx={cx} cy={cy} r={5.2} fill="#ffffff" stroke={color} strokeWidth={1.6} />
+        <circle cx={cx} cy={cy} r={2.6} fill={color} />
       </g>
     );
   }
   return (
     <g>
-      <circle cx={cx} cy={cy} r={6} fill={color} stroke="white" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={3.8} fill={color} stroke="white" strokeWidth={1.2} />
     </g>
   );
 };
@@ -165,6 +165,7 @@ export function BacktestResults({
     underlying: true,
     callStrike: true,
   }));
+  const [showSettlementDots, setShowSettlementDots] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1043,6 +1044,18 @@ export function BacktestResults({
             >
               低密度
             </button>
+            <button
+              type="button"
+              onClick={() => setShowSettlementDots(prev => !prev)}
+              aria-pressed={showSettlementDots}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                showSettlementDots
+                  ? 'border-indigo-300 bg-indigo-50/80 text-indigo-600'
+                  : 'border-slate-200 bg-white text-slate-400 hover:border-indigo-200 hover:text-indigo-500'
+              }`}
+            >
+              {showSettlementDots ? '換倉點：顯示' : '換倉點：隱藏'}
+            </button>
             <div className="ml-2 flex items-center gap-2">
               <span className="text-slate-500">顯示序列</span>
               <div className="flex items-center gap-2">
@@ -1124,14 +1137,14 @@ export function BacktestResults({
                 />
                 <Tooltip content={<CustomTooltip />} />
                 {seriesConfig.map(series => {
-                  const dotRenderer = settlementDotRenderers[series.key];
+                  const dotRenderer = showSettlementDots ? settlementDotRenderers[series.key] : undefined;
                   return (
                     <Line
                       key={series.key}
                       type="monotone"
                       dataKey={series.dataKey}
                       dot={dotRenderer ?? false}
-                      activeDot={dotRenderer ? { r: 6 } : undefined}
+                      activeDot={dotRenderer ? { r: 4.5 } : undefined}
                       strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
                       stroke={series.color}
                       name={series.label}
