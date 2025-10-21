@@ -122,10 +122,6 @@ type ChartDatum = BacktestCurvePoint & {
   [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
-type ChartDatum = BacktestCurvePoint & {
-  [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
-};
-
 type BacktestResultsProps = {
   strategies: StrategyRunResult[];
   ticker: string;
@@ -295,6 +291,18 @@ export function BacktestResults({
     });
     return map;
   }, [seriesConfig]);
+
+  const settlementKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          seriesConfig
+            .map(series => series.settlementKey)
+            .filter((key): key is string => typeof key === 'string' && key.length > 0),
+        ),
+      ),
+    [seriesConfig],
+  );
 
   useEffect(() => {
     setSeriesVisibility(prev => {
@@ -945,12 +953,27 @@ export function BacktestResults({
   );
 
   const renderedData = useMemo(() => {
-    if (pointDensity === 'dense') {
+    if (pointDensity === 'dense' || visibleData.length <= 2) {
       return visibleData;
     }
+
+    const required = new Set<number>();
+    if (settlementKeys.length > 0) {
+      visibleData.forEach((point, idx) => {
+        const payload = point as Record<string, unknown>;
+        for (const key of settlementKeys) {
+          const value = payload[key];
+          if (value && typeof value === 'object') {
+            required.add(idx);
+            break;
+          }
+        }
+      });
+    }
+
     const step = pointDensity === 'sparse' ? 5 : 2;
-    return visibleData.filter((_, idx) => idx % step === 0 || idx === visibleData.length - 1);
-  }, [pointDensity, visibleData]);
+    return visibleData.filter((_, idx) => idx % step === 0 || idx === visibleData.length - 1 || required.has(idx));
+  }, [pointDensity, settlementKeys, visibleData]);
 
   const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
   const canDownloadCsv = useMemo(() => result.curve.length > 0, [result.curve.length]);
@@ -1154,41 +1177,6 @@ export function BacktestResults({
           <p className="text-xs text-slate-500">所有自訂策略將與 Buy &amp; Hold 同列呈現以便比較。</p>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">策略</th>
-                <th className="px-4 py-3 text-right font-semibold">最終資產</th>
-                <th className="px-4 py-3 text-right font-semibold">總報酬</th>
-                <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
-                <th className="px-4 py-3 text-right font-semibold">勝率 / 次數</th>
-                <th className="px-4 py-3 text-right font-semibold">相對 Buy &amp; Hold</th>
-                <th className="px-4 py-3 font-semibold">Roll 策略</th>
-                <th className="px-4 py-3 font-semibold">進階選項</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {strategyComparisonRows.map(row => (
-                <tr key={row.id} className="bg-white/70 hover:bg-indigo-50/40">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
-                      <span className="font-medium text-slate-700">{row.label}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.winRate}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.relativeReturn}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.rollDescription}</td>
-                  <td className="px-4 py-3 text-slate-700">{row.options}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-8 overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
             <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
               <tr>
