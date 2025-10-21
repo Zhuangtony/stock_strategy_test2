@@ -21,16 +21,33 @@ import {
   type TooltipProps,
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
-import type { RunBacktestResult } from '../../lib/backtest';
+import type { BacktestCurvePoint } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
-import type { ComparisonDeltaInput, ComparisonResultEntry } from './types';
+import type { StrategyConfigInput, StrategyRunResult } from './types';
 
-const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
+const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+const formatDateWithWeekday = (value: string) => {
+  if (!value) return value;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const weekday = weekdayFormatter.format(parsed);
+  return `${value} (${weekday})`;
+};
+
+const createSettlementDotRenderer = (settlementKey: string): NonNullable<LineProps['dot']> => props => {
   const { cx, cy } = props as DotProps;
   if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
-  const settlement = (props as any)?.payload?.settlement;
-  if (!settlement || settlement.type !== 'expiry') return <g />;
+  const settlement = (props as any)?.payload?.[settlementKey];
+  if (!settlement || (settlement.type !== 'expiry' && settlement.type !== 'roll')) return <g />;
   const color = settlement.pnl >= 0 ? '#22c55e' : '#ef4444';
+  if (settlement.type === 'roll') {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={7} fill="#ffffff" stroke={color} strokeWidth={2} />
+        <circle cx={cx} cy={cy} r={3.5} fill={color} />
+      </g>
+    );
+  }
   return (
     <g>
       <circle cx={cx} cy={cy} r={6} fill={color} stroke="white" strokeWidth={1.5} />
@@ -38,7 +55,13 @@ const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
   );
 };
 
-const RollMarkerLabel = ({ viewBox, x }: { viewBox?: { x?: number; y?: number; width?: number; height?: number }; x?: number }) => {
+const RollMarkerLabel = ({
+  viewBox,
+  x,
+}: {
+  viewBox?: { x?: number; y?: number; width?: number; height?: number };
+  x?: number;
+}) => {
   if (!viewBox && typeof x !== 'number') return null;
   const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
   const chartTop = viewBox?.y ?? 0;
@@ -71,7 +94,7 @@ const RollMarkerLabel = ({ viewBox, x }: { viewBox?: { x?: number; y?: number; w
         opacity={0.95}
       />
       <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
-        Roll up &amp; out
+        Delta Roll-up
       </text>
     </g>
   );
@@ -90,20 +113,17 @@ type SeriesConfig = {
   dataKey: string;
   axis: 'value' | 'price';
   strokeDasharray?: string;
+  settlementKey?: string;
 };
 
 type SeriesKey = SeriesConfig['key'];
 
-type SummaryCard = {
-  label: string;
-  value: string;
-  footnote?: string;
+type ChartDatum = BacktestCurvePoint & {
+  [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
 type BacktestResultsProps = {
-  result: RunBacktestResult;
-  comparisonDeltas: ComparisonDeltaInput[];
-  comparisonResults: ComparisonResultEntry[];
+  strategies: StrategyRunResult[];
   ticker: string;
   start: string;
   end: string;
@@ -111,14 +131,33 @@ type BacktestResultsProps = {
 };
 
 export function BacktestResults({
-  result,
-  comparisonDeltas,
-  comparisonResults,
+  strategies,
   ticker,
   start,
   end,
   panelClass,
 }: BacktestResultsProps) {
+  if (!strategies.length) return null;
+  const primaryStrategy = strategies[0];
+  const result = primaryStrategy.result;
+  const comparisonStrategies = strategies.slice(1);
+  const getStrategyColor = useCallback(
+    (index: number) => (index === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(index - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length]),
+    [],
+  );
+  const formatStrategyLabel = useCallback(
+    (config: StrategyConfigInput) => {
+      const base = config.label.trim() || 'Covered Call';
+      return `${base} (Δ${config.targetDelta.toFixed(2)})`;
+    },
+    [],
+  );
+  const formatSignedPercent = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '—';
+    const pct = value * 100;
+    const digits = Math.abs(pct) >= 100 ? 1 : 2;
+    return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
+  }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
     buyAndHold: true,
@@ -130,6 +169,9 @@ export function BacktestResults({
   const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerTrackRef = useRef<HTMLDivElement | null>(null);
+  const attachScrollerTrack = useCallback((node: HTMLDivElement | null) => {
+    scrollerTrackRef.current = node;
+  }, []);
   const [scrollerWidth, setScrollerWidth] = useState(0);
   const scrollerDragState = useRef<{ pointerId: number | null; offset: number; active: boolean; element: HTMLElement | null }>({
     pointerId: null,
@@ -139,10 +181,41 @@ export function BacktestResults({
   });
   const [isScrollerDragging, setIsScrollerDragging] = useState(false);
 
+  const handleEnterFullscreen = useCallback(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    setIsFullscreen(true);
+    if (container.requestFullscreen) {
+      container.requestFullscreen().catch(() => {
+        // Fallback to CSS-based fullscreen if API request fails
+        setIsFullscreen(true);
+      });
+    }
+  }, []);
+
+  const handleExitFullscreen = useCallback(() => {
+    const exit = () => setIsFullscreen(false);
+    if (document.fullscreenElement) {
+      document
+        .exitFullscreen()
+        .then(exit)
+        .catch(exit);
+    } else {
+      exit();
+    }
+  }, []);
+
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
       { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
-      { key: 'coveredCall', label: 'Covered Call', color: '#f97316', dataKey: 'CoveredCall', axis: 'value' },
+      {
+        key: 'coveredCall',
+        label: formatStrategyLabel(primaryStrategy.config),
+        color: getStrategyColor(0),
+        dataKey: 'CoveredCall',
+        axis: 'value',
+        settlementKey: 'settlement',
+      },
       { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
       {
         key: 'callStrike',
@@ -153,32 +226,30 @@ export function BacktestResults({
         strokeDasharray: '6 3',
       },
     ],
-    [],
+    [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
   );
 
   const comparisonSeriesList = useMemo(
     () =>
-      comparisonDeltas.map((delta, index) => {
-        const entry = comparisonResults.find(item => item.id === delta.id);
-        const normalized = delta.value.toFixed(2);
-        const slugBase = normalized.replace('.', 'p');
-        const slug = `${slugBase}_${delta.id}`;
+      comparisonStrategies.map((entry, index) => {
+        const dataKey = `CoveredCall_${entry.id}`;
+        const settlementKey = `settlement_${entry.id}`;
         const config: SeriesConfig = {
-          key: `coveredCall-${delta.id}`,
-          label: `Covered Call Δ${normalized}`,
-          color: COMPARISON_SERIES_COLORS[index % COMPARISON_SERIES_COLORS.length],
-          dataKey: `CoveredCall_${slug}`,
+          key: `strategy-${entry.id}`,
+          label: formatStrategyLabel(entry.config),
+          color: getStrategyColor(index + 1),
+          dataKey,
           axis: 'value',
           strokeDasharray: '5 3',
+          settlementKey,
         };
-        const curveSource = entry?.result?.curve;
-        return { config, curve: Array.isArray(curveSource) ? curveSource : [] };
+        return { config, curve: entry.result.curve };
       }),
-    [comparisonDeltas, comparisonResults],
+    [comparisonStrategies, formatStrategyLabel, getStrategyColor],
   );
 
   const chartData = useMemo(() => {
-    const base = result.curve.map(point => ({ ...point }));
+    const base = result.curve.map(point => ({ ...point })) as ChartDatum[];
     if (!comparisonSeriesList.length) return base;
     comparisonSeriesList.forEach(series => {
       const { curve, config } = series;
@@ -186,23 +257,52 @@ export function BacktestResults({
       for (let i = 0; i < base.length; i++) {
         const value = curve[i]?.CoveredCall;
         base[i][config.dataKey] = value ?? null;
+        if (config.settlementKey) {
+          const settlementValue = curve[i]?.settlement ?? null;
+          base[i][config.settlementKey] = settlementValue;
+        }
       }
     });
     return base;
   }, [comparisonSeriesList, result.curve]);
 
   const seriesConfig = useMemo(() => {
-    const base = BASE_SERIES_CONFIG.map(series => {
-      if (series.key === 'coveredCall') {
-        const effectiveDelta = result.effectiveTargetDelta;
-        const label = typeof effectiveDelta === 'number' ? `Covered Call Δ${effectiveDelta.toFixed(2)}` : series.label;
-        return { ...series, label } as SeriesConfig;
-      }
-      return { ...series } as SeriesConfig;
-    });
+    const base = BASE_SERIES_CONFIG.map(series => ({ ...series }));
     const dynamic = comparisonSeriesList.map(series => series.config);
     return [...base, ...dynamic];
-  }, [BASE_SERIES_CONFIG, comparisonSeriesList, result.effectiveTargetDelta]);
+  }, [BASE_SERIES_CONFIG, comparisonSeriesList]);
+
+  const settlementDotRenderers = useMemo(() => {
+    const map: Record<string, NonNullable<LineProps['dot']>> = {};
+    seriesConfig.forEach(series => {
+      if (series.settlementKey) {
+        map[series.key] = createSettlementDotRenderer(series.settlementKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
+
+  const settlementKeyByDataKey = useMemo(() => {
+    const map = new Map<string, string>();
+    seriesConfig.forEach(series => {
+      if (series.settlementKey) {
+        map.set(series.dataKey, series.settlementKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
+
+  const settlementKeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          seriesConfig
+            .map(series => series.settlementKey)
+            .filter((key): key is string => typeof key === 'string' && key.length > 0),
+        ),
+      ),
+    [seriesConfig],
+  );
 
   useEffect(() => {
     setSeriesVisibility(prev => {
@@ -261,9 +361,24 @@ export function BacktestResults({
 
   useEffect(() => {
     if (!result) {
-      setIsFullscreen(false);
+      handleExitFullscreen();
     }
-  }, [result]);
+  }, [handleExitFullscreen, result]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const element = document.fullscreenElement;
+      if (!element || element !== chartContainerRef.current) {
+        setIsFullscreen(false);
+      } else {
+        setIsFullscreen(true);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
 
   useEffect(() => {
     const track = scrollerTrackRef.current;
@@ -323,14 +438,14 @@ export function BacktestResults({
     if (!isFullscreen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsFullscreen(false);
+        handleExitFullscreen();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isFullscreen]);
+  }, [handleExitFullscreen, isFullscreen]);
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -402,7 +517,14 @@ export function BacktestResults({
   }, [activeBrushRange, chartLength, scrollerWidth]);
 
   const settlementPoints = useMemo(() => result.settlements ?? [], [result.settlements]);
-  const rollPoints = useMemo(() => settlementPoints.filter(point => point.type === 'roll'), [settlementPoints]);
+  const rollPoints = useMemo(
+    () => settlementPoints.filter(point => point.type === 'roll'),
+    [settlementPoints],
+  );
+  const deltaRollPoints = useMemo(
+    () => rollPoints.filter(point => (point.rollReason ?? 'delta') === 'delta'),
+    [rollPoints],
+  );
   const expirationSettlements = useMemo(
     () => settlementPoints.filter(point => point.type === 'expiry' && point.qty > 0),
     [settlementPoints],
@@ -547,22 +669,20 @@ export function BacktestResults({
     };
 
     const baseRows = result.curve;
-    const comparisonColumns = comparisonResults
-      .filter(entry => Array.isArray(entry.result?.curve) && entry.result!.curve.length > 0)
-      .map(entry => {
-        const label = `Covered Call Value (Δ${entry.value.toFixed(2)})`;
-        const map = new Map<string, number | null>();
-        entry.result!.curve.forEach(point => {
-          const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
-          map.set(point.date, value);
-        });
-        return { label, map };
+    const comparisonColumns = comparisonStrategies.map(entry => {
+      const label = `${formatStrategyLabel(entry.config)} Value`;
+      const map = new Map<string, number | null>();
+      entry.result.curve.forEach(point => {
+        const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
+        map.set(point.date, value);
       });
+      return { label, map };
+    });
 
     const headers = [
       'Date',
       'Buy & Hold Value',
-      'Covered Call Value',
+      `${formatStrategyLabel(primaryStrategy.config)} Value`,
       'Underlying Price',
       'Call Strike',
       'Call Delta',
@@ -613,7 +733,7 @@ export function BacktestResults({
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [comparisonResults, end, result.curve, start, ticker]);
+  }, [comparisonStrategies, end, formatStrategyLabel, primaryStrategy.config, result.curve, start, ticker]);
 
   useEffect(() => {
     if (!scrollerMetrics.hasWindow) {
@@ -663,7 +783,7 @@ export function BacktestResults({
         const ratio = delta / rect.width;
         const windowSize = initialRange.endIndex - initialRange.startIndex + 1;
         if (windowSize >= chartLength) return;
-        let startIndex = Math.round(initialRange.startIndex - ratio * chartLength);
+        let startIndex = Math.round(initialRange.startIndex + ratio * chartLength);
         startIndex = Math.max(0, Math.min(chartLength - windowSize, startIndex));
         const endIndex = Math.min(chartLength - 1, startIndex + windowSize - 1);
         setBrushRange({ startIndex, endIndex });
@@ -682,25 +802,121 @@ export function BacktestResults({
 
   const formatValueTick = useCallback((value: number) => formatCurrency(value, 0), []);
   const formatPriceTick = useCallback((value: number) => value.toFixed(2), []);
+  const formatDateTick = useCallback((value: string | number) => {
+    if (typeof value !== 'string') return String(value ?? '');
+    return formatDateWithWeekday(value);
+  }, []);
+
+  const renderScrollerTrack = useCallback(
+    () => (
+      <div
+        ref={attachScrollerTrack}
+        className="relative h-3 w-full select-none rounded-full bg-slate-200/70 shadow-inner shadow-slate-300/40 touch-none cursor-pointer"
+        onPointerDown={handleTrackPointerDown}
+        onPointerMove={handleScrollerPointerMove}
+        onPointerUp={handleScrollerPointerUp}
+        onPointerCancel={handleScrollerPointerCancel}
+      >
+        {scrollerMetrics.hasWindow ? (
+          <div
+            className={`absolute top-0 h-full rounded-full bg-indigo-400/80 transition-[background-color] duration-150 hover:bg-indigo-400 touch-none ${
+              isScrollerDragging ? 'cursor-grabbing' : 'cursor-grab'
+            }`}
+            style={{
+              width: `${scrollerMetrics.thumbWidth}px`,
+              transform: `translateX(${scrollerMetrics.thumbPosition}px)`,
+            }}
+            onPointerDown={handleThumbPointerDown}
+            onPointerMove={handleScrollerPointerMove}
+            onPointerUp={handleScrollerPointerUp}
+            onPointerCancel={handleScrollerPointerCancel}
+          />
+        ) : (
+          <div className="absolute top-0 h-full w-full rounded-full bg-slate-300/60" />
+        )}
+      </div>
+    ),
+    [
+      attachScrollerTrack,
+      handleScrollerPointerCancel,
+      handleScrollerPointerMove,
+      handleScrollerPointerUp,
+      handleThumbPointerDown,
+      handleTrackPointerDown,
+      isScrollerDragging,
+      scrollerMetrics,
+    ],
+  );
 
   const CustomTooltip = useCallback(
     ({ active, payload, label }: TooltipProps<number, string>) => {
       if (!active || !payload || !payload.length) return null;
       const point = payload[0].payload as any;
-      const settlement = point.settlement;
       const callDelta = point.CallDelta;
       const rollMarks = rollPoints.filter(event => event.date === point.date);
+      const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
+      const scheduledRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'scheduled');
+      const formattedLabel = typeof label === 'string' ? formatDateWithWeekday(label) : label;
+      const strategyValues = payload
+        .filter(item => typeof item.dataKey === 'string' && item.dataKey.startsWith('CoveredCall'))
+        .map(item => {
+          const dataKey = item.dataKey as string;
+          const settlementKey = settlementKeyByDataKey.get(dataKey);
+          const settlementValue = settlementKey ? point[settlementKey] : null;
+          return {
+            key: dataKey,
+            dataKey,
+            label: item.name,
+            color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
+            value: typeof item.value === 'number' ? item.value : null,
+            settlement: settlementValue,
+          };
+        });
+      const primaryEntry = strategyValues.find(entry => entry.dataKey === 'CoveredCall');
+      const settlement = primaryEntry?.settlement ?? null;
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
-          <div className="text-sm font-semibold text-slate-900">{label}</div>
+          <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
           <div className="mt-2 space-y-1">
             <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
-            <div>Covered Call：{formatCurrency(point.CoveredCall)}</div>
+            {strategyValues.map(entry => (
+              <div key={entry.key} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+                  <span className="flex items-center gap-2">
+                    {entry.label}
+                    {entry.settlement && (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
+                          entry.settlement.type === 'roll'
+                            ? entry.settlement.rollReason === 'delta'
+                              ? 'bg-indigo-100 text-indigo-600'
+                              : 'bg-slate-200 text-slate-600'
+                            : 'bg-emerald-100 text-emerald-600'
+                        }`}
+                      >
+                        {entry.settlement.type === 'roll'
+                          ? entry.settlement.rollReason === 'delta'
+                            ? 'Delta Roll'
+                            : '例行換倉'
+                          : '到期結算'}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+              </div>
+            ))}
             <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
             {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
-            {rollMarks.length > 0 && (
+            {deltaRollMarks.length > 0 && (
               <div className="rounded-lg bg-indigo-50/80 px-2 py-1 text-[11px] font-medium text-indigo-700">
-                本日有 Roll up &amp; out
+                Delta 閾值觸發 Roll-up
+              </div>
+            )}
+            {scheduledRollMarks.length > 0 && (
+              <div className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+                例行換倉（Roll-out）
               </div>
             )}
             {settlement && (
@@ -717,7 +933,11 @@ export function BacktestResults({
                   )}
                   {typeof settlement.delta === 'number' && <div>Delta：{settlement.delta.toFixed(2)}</div>}
                   {settlement.type === 'roll' && (
-                    <div className="text-[11px] text-slate-500">已提前平倉並換至下一期合約</div>
+                    <div className="text-[11px] text-slate-500">
+                      {settlement.rollReason === 'delta'
+                        ? '因 Delta 達到設定閾值提前換倉'
+                        : '例行提前換倉至下一期合約'}
+                    </div>
                   )}
                 </div>
               </div>
@@ -729,64 +949,69 @@ export function BacktestResults({
         </div>
       );
     },
-    [rollPoints],
+    [formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
   );
 
   const renderedData = useMemo(() => {
-    if (pointDensity === 'dense') {
+    if (pointDensity === 'dense' || visibleData.length <= 2) {
       return visibleData;
     }
+
+    const required = new Set<number>();
+    if (settlementKeys.length > 0) {
+      visibleData.forEach((point, idx) => {
+        const payload = point as Record<string, unknown>;
+        for (const key of settlementKeys) {
+          const value = payload[key];
+          if (value && typeof value === 'object') {
+            required.add(idx);
+            break;
+          }
+        }
+      });
+    }
+
     const step = pointDensity === 'sparse' ? 5 : 2;
-    return visibleData.filter((_, idx) => idx % step === 0 || idx === visibleData.length - 1);
-  }, [pointDensity, visibleData]);
+    return visibleData.filter((_, idx) => idx % step === 0 || idx === visibleData.length - 1 || required.has(idx));
+  }, [pointDensity, settlementKeys, visibleData]);
 
   const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
   const canDownloadCsv = useMemo(() => result.curve.length > 0, [result.curve.length]);
 
-  const summaryCards: SummaryCard[] = useMemo(() => {
-    const formatPct = (value: number) => `${(value * 100).toFixed(2)}%`;
-    const annualized = (value: number) => {
-      const years = Math.max(1 / 12, result.curve.length / 252);
-      return `${(((1 + value) ** (1 / years) - 1) * 100).toFixed(2)}%`;
-    };
-    return [
-      {
-        label: 'Buy & Hold 報酬率',
-        value: formatPct(result.bhReturn),
-        footnote: `年化：約 ${annualized(result.bhReturn)}`,
-      },
-      {
-        label: 'Covered Call 報酬率',
-        value: formatPct(result.ccReturn),
-        footnote: `年化：約 ${annualized(result.ccReturn)}`,
-      },
-      {
-        label: 'Covered Call 勝率',
-        value: `${(result.ccWinRate * 100).toFixed(1)}%`,
-        footnote: `樣本數：${result.ccSettlementCount} 次結算`,
-      },
-      {
-        label: '隱含波動率 (IV)',
-        value: `${(result.ivUsed * 100).toFixed(2)}%`,
-        footnote: `歷史波動率估計：${(result.hv * 100).toFixed(2)}%`,
-      },
-    ];
-  }, [result]);
-
-  const summaryCardsWithRoll = useMemo(() => {
-    if (!result.rollEvents.length) return summaryCards;
-    const averageRollDelta =
-      result.rollEvents.reduce((acc, cur) => acc + (typeof cur.delta === 'number' ? cur.delta : 0), 0) /
-      Math.max(1, result.rollEvents.length);
-    return [
-      ...summaryCards,
-      {
-        label: '平均 Roll Delta',
-        value: averageRollDelta ? averageRollDelta.toFixed(2) : '—',
-        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}`,
-      },
-    ];
-  }, [result.rollDeltaTrigger, result.rollEvents, summaryCards]);
+  const strategyComparisonRows = useMemo(
+    () =>
+      strategies.map((entry, index) => {
+        const years = Math.max(1 / 12, entry.result.curve.length / 252);
+        const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
+        const rollDescription = entry.config.enableRoll
+          ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
+              entry.config.rollDaysBeforeExpiry === 0
+                ? '到期日換倉'
+                : `提前 ${entry.config.rollDaysBeforeExpiry} 日`
+            }`
+          : '未啟用';
+        const optionFlags: string[] = [];
+        if (entry.config.reinvestPremium) optionFlags.push('權利金再投資');
+        if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
+        if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
+        if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
+        const options = optionFlags.length ? optionFlags.join(' / ') : '—';
+        const finalValue = entry.result.curve.at(-1)?.CoveredCall;
+        return {
+          id: entry.id,
+          color: getStrategyColor(index),
+          label: formatStrategyLabel(entry.config),
+          finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
+          totalReturn: formatSignedPercent(entry.result.ccReturn),
+          annualized: formatSignedPercent(annualized),
+          winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
+          relativeReturn: formatSignedPercent(entry.result.ccReturn - entry.result.bhReturn),
+          rollDescription,
+          options,
+        };
+      }),
+    [formatSignedPercent, formatStrategyLabel, getStrategyColor, strategies],
+  );
 
   return (
     <React.Fragment>
@@ -856,7 +1081,7 @@ export function BacktestResults({
               )}
               <button
                 type="button"
-                onClick={() => setIsFullscreen(true)}
+                onClick={handleEnterFullscreen}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 transition hover:bg-indigo-50"
               >
                 全螢幕
@@ -876,7 +1101,12 @@ export function BacktestResults({
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={renderedData} margin={chartMargin}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
-                <XAxis dataKey="date" tick={{ fontSize: 12, fontWeight: 600 }} minTickGap={30} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  minTickGap={30}
+                  tickFormatter={formatDateTick}
+                />
                 <YAxis
                   yAxisId="value"
                   tick={{ fontSize: 12, fontWeight: 600 }}
@@ -893,24 +1123,27 @@ export function BacktestResults({
                   domain={['auto', 'auto']}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                {seriesConfig.map(series => (
-                  <Line
-                    key={series.key}
-                    type="monotone"
-                    dataKey={series.dataKey}
-                    dot={series.key === 'coveredCall' ? settlementDotRenderer : false}
-                    activeDot={series.key === 'coveredCall' ? { r: 6 } : undefined}
-                    strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
-                    stroke={series.color}
-                    name={series.label}
-                    yAxisId={series.axis}
-                    hide={seriesVisibility[series.key] === false}
-                    strokeDasharray={series.strokeDasharray}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                ))}
-                {rollPoints.map((point, idx) => (
+                {seriesConfig.map(series => {
+                  const dotRenderer = settlementDotRenderers[series.key];
+                  return (
+                    <Line
+                      key={series.key}
+                      type="monotone"
+                      dataKey={series.dataKey}
+                      dot={dotRenderer ?? false}
+                      activeDot={dotRenderer ? { r: 6 } : undefined}
+                      strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                      stroke={series.color}
+                      name={series.label}
+                      yAxisId={series.axis}
+                      hide={seriesVisibility[series.key] === false}
+                      strokeDasharray={series.strokeDasharray}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                  );
+                })}
+                {deltaRollPoints.map((point, idx) => (
                   <ReferenceLine
                     key={`roll-${point.date}-${idx}`}
                     x={point.date}
@@ -923,37 +1156,30 @@ export function BacktestResults({
                 ))}
               </LineChart>
             </ResponsiveContainer>
-            <div className="mt-4">
-              <div
-                ref={scrollerTrackRef}
-                className="relative h-3 w-full select-none rounded-full bg-slate-200/70 shadow-inner shadow-slate-300/40 touch-none cursor-pointer"
-                onPointerDown={handleTrackPointerDown}
-                onPointerMove={handleScrollerPointerMove}
-                onPointerUp={handleScrollerPointerUp}
-                onPointerCancel={handleScrollerPointerCancel}
-              >
-                {scrollerMetrics.hasWindow ? (
+            <div className="pointer-events-none absolute left-4 top-4 z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs">
+              {seriesConfig.map(series => {
+                const active = seriesVisibility[series.key] ?? true;
+                const dashed = Boolean(series.strokeDasharray);
+                return (
                   <div
-                    className={`absolute top-0 h-full rounded-full bg-indigo-400/80 transition-[background-color] duration-150 hover:bg-indigo-400 touch-none ${
-                      isScrollerDragging ? 'cursor-grabbing' : 'cursor-grab'
+                    key={`legend-${series.key}`}
+                    className={`flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm backdrop-blur ${
+                      active ? '' : 'opacity-45'
                     }`}
-                    style={{
-                      width: `${scrollerMetrics.thumbWidth}px`,
-                      transform: `translateX(${scrollerMetrics.thumbPosition}px)`,
-                    }}
-                    onPointerDown={handleThumbPointerDown}
-                    onPointerMove={handleScrollerPointerMove}
-                    onPointerUp={handleScrollerPointerUp}
-                    onPointerCancel={handleScrollerPointerCancel}
-                  />
-                ) : (
-                  <div className="absolute top-0 h-full w-full rounded-full bg-slate-300/60" />
-                )}
-              </div>
+                  >
+                    <span
+                      className={`inline-block h-0 w-6 border-b-2 ${dashed ? 'border-dashed' : ''}`}
+                      style={{ borderColor: series.color }}
+                    />
+                    <span className="whitespace-nowrap">{series.label}</span>
+                  </div>
+                );
+              })}
             </div>
+            {isFullscreen && <div className="mt-4">{renderScrollerTrack()}</div>}
             <button
               type="button"
-              onClick={() => setIsFullscreen(false)}
+              onClick={handleExitFullscreen}
               className={`${
                 isFullscreen ? 'absolute right-6 top-6 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-slate-600 shadow-lg shadow-indigo-200 transition hover:bg-indigo-50' : 'hidden'
               }`}
@@ -963,20 +1189,47 @@ export function BacktestResults({
           </div>
         </ChartErrorBoundary>
       </section>
+      {!isFullscreen && <div className="mx-6 mt-4 md:mx-8">{renderScrollerTrack()}</div>}
 
       <section className={`${panelClass} p-6 md:p-8`}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-900">回測總結</h2>
-          <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">策略比較</h2>
+          <p className="text-xs text-slate-500">所有自訂策略將與 Buy &amp; Hold 同列呈現以便比較。</p>
         </div>
-        <div className="grid grid-cols-1 gap-4 text-sm [grid-auto-rows:1fr] sm:grid-cols-2 lg:grid-cols-4">
-          {summaryCardsWithRoll.map(card => (
-            <div key={card.label} className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{card.label}</div>
-              <div className="mt-3 text-2xl font-semibold leading-tight text-slate-900">{card.value}</div>
-              {card.footnote && <div className="mt-auto text-xs text-slate-400">{card.footnote}</div>}
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">策略</th>
+                <th className="px-4 py-3 text-right font-semibold">最終資產</th>
+                <th className="px-4 py-3 text-right font-semibold">總報酬</th>
+                <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
+                <th className="px-4 py-3 text-right font-semibold">勝率 / 次數</th>
+                <th className="px-4 py-3 text-right font-semibold">相對 Buy &amp; Hold</th>
+                <th className="px-4 py-3 font-semibold">Roll 策略</th>
+                <th className="px-4 py-3 font-semibold">進階選項</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {strategyComparisonRows.map(row => (
+                <tr key={row.id} className="bg-white/70 hover:bg-indigo-50/40">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
+                      <span className="font-medium text-slate-700">{row.label}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
+                  <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.winRate}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.relativeReturn}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.rollDescription}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.options}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
     </React.Fragment>
