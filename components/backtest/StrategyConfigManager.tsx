@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { StrategyConfigInput } from './types';
 
@@ -14,6 +14,12 @@ export type StrategyConfigManagerProps = {
 const formatStrategyLabel = (label: string, index: number) => label || `策略 ${index + 1}`;
 
 export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: StrategyConfigManagerProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggleAdvanced = (id: string) => {
+    setExpandedId(prev => (prev === id ? null : id));
+  };
+
   return (
     <div className="md:col-span-3 rounded-2xl border border-dashed border-slate-200/70 bg-white/60 p-4 shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -29,32 +35,26 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
           新增組合
         </button>
       </div>
-      <div className="mt-4 overflow-x-auto">
-        <div className="min-w-[720px] space-y-3">
-          <div className="hidden grid-cols-[1fr_repeat(4,minmax(100px,1fr))] items-center gap-3 rounded-xl bg-slate-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:grid">
-            <div>標籤</div>
-            <div>目標 Δ</div>
-            <div>Delta Roll 閾值</div>
-            <div>提前換倉日</div>
-            <div>其他選項</div>
+      <div className="mt-4 space-y-3">
+        {configs.length === 0 ? (
+          <div className="rounded-xl border border-slate-200/70 bg-white/80 px-4 py-6 text-center text-xs text-slate-400 shadow-sm">
+            尚未建立策略組合。
           </div>
-          {configs.length === 0 ? (
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 px-4 py-6 text-center text-xs text-slate-400 shadow-sm">
-              尚未建立策略組合。
-            </div>
-          ) : (
-            configs.map((config, idx) => {
-              const color = idx === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(idx - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length];
-              const label = formatStrategyLabel(config.label, idx);
-              const approxWeekday = ['週五', '週四', '週三', '週二', '週一'][Math.max(0, Math.min(4, config.rollDaysBeforeExpiry))];
-              return (
-                <div
-                  key={config.id}
-                  className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200/80 bg-white/80 p-4 text-sm shadow-sm md:grid-cols-[1fr_repeat(4,minmax(100px,1fr))] md:items-center"
-                  title={label}
-                >
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">標籤</label>
+        ) : (
+          configs.map((config, idx) => {
+            const color = idx === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(idx - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length];
+            const label = formatStrategyLabel(config.label, idx);
+            const approxWeekday = ['週五', '週四', '週三', '週二', '週一'][Math.max(0, Math.min(4, config.rollDaysBeforeExpiry))];
+            const advancedOpen = expandedId === config.id;
+            return (
+              <div
+                key={config.id}
+                className="space-y-3 rounded-xl border border-slate-200/80 bg-white/80 p-4 text-sm shadow-sm"
+                title={label}
+              >
+                <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-end">
+                  <div className="flex min-w-[180px] flex-1 flex-col gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">標籤</span>
                     <div className="flex items-center gap-2">
                       <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} aria-hidden />
                       <input
@@ -65,17 +65,26 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                         className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                       />
                     </div>
-                    <button
-                      type="button"
-                      className="text-xs text-red-500 transition hover:text-red-600"
-                      onClick={() => onRemove(config.id)}
-                      disabled={configs.length === 1}
-                    >
-                      移除
-                    </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <button
+                        type="button"
+                        className="text-red-500 transition hover:text-red-600 disabled:opacity-40"
+                        onClick={() => onRemove(config.id)}
+                        disabled={configs.length === 1}
+                      >
+                        移除
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleAdvanced(config.id)}
+                        className="flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600"
+                      >
+                        {advancedOpen ? '隱藏進階' : '進階選項'}
+                      </button>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">目標 Delta</label>
+                  <div className="flex min-w-[220px] flex-1 flex-col gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">目標 Delta</span>
                     <div className="flex items-center gap-3">
                       <input
                         type="range"
@@ -102,8 +111,19 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Delta Roll 閾值</label>
+                  <div className="flex min-w-[220px] flex-1 flex-col gap-2">
+                    <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <span>Delta Roll 閾值</span>
+                      <label className="flex items-center gap-2 text-[11px] font-medium normal-case text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={config.enableRoll}
+                          onChange={e => onChange(config.id, { enableRoll: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        自動 Roll
+                      </label>
+                    </div>
                     <div className="flex items-center gap-3">
                       <input
                         type="range"
@@ -132,8 +152,8 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">提前換倉日</label>
+                  <div className="flex min-w-[200px] flex-1 flex-col gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">提前換倉日</span>
                     <div className="flex items-center gap-3">
                       <input
                         type="range"
@@ -164,64 +184,54 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                     <p className="text-[11px] text-slate-400">
                       {config.rollDaysBeforeExpiry === 0
                         ? '到期日 (週五) 換倉'
-                        : `到期前 ${config.rollDaysBeforeExpiry} 個交易日 (約${approxWeekday})`}
+                        : `到期前 ${config.rollDaysBeforeExpiry} 個交易日 · 約${approxWeekday}`}
                     </p>
                   </div>
-                  <div className="space-y-2 text-xs text-slate-600">
-                    <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">選項</label>
-                    <div className="flex flex-col gap-2">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.enableRoll}
-                          onChange={e => onChange(config.id, { enableRoll: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>啟用自動 Roll</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.reinvestPremium}
-                          onChange={e => onChange(config.id, { reinvestPremium: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>權利金再投資</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.dynamicContracts}
-                          onChange={e => onChange(config.id, { dynamicContracts: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>合約張數動態調整</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.skipEarningsWeek}
-                          onChange={e => onChange(config.id, { skipEarningsWeek: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>跳過財報週</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config.roundStrikeToInt}
-                          onChange={e => onChange(config.id, { roundStrikeToInt: e.target.checked })}
-                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>履約價取整數</span>
-                      </label>
-                    </div>
-                  </div>
                 </div>
-              );
-            })
-          )}
-        </div>
+                {advancedOpen && (
+                  <div className="grid gap-3 rounded-lg bg-slate-50/80 p-3 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.reinvestPremium}
+                        onChange={e => onChange(config.id, { reinvestPremium: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>權利金再投資</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.dynamicContracts}
+                        onChange={e => onChange(config.id, { dynamicContracts: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>合約張數動態調整</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.skipEarningsWeek}
+                        onChange={e => onChange(config.id, { skipEarningsWeek: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>跳過財報週</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.roundStrikeToInt}
+                        onChange={e => onChange(config.id, { roundStrikeToInt: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>履約價取整數</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

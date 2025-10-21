@@ -34,10 +34,10 @@ const formatDateWithWeekday = (value: string) => {
   return `${value} (${weekday})`;
 };
 
-const settlementDotRenderer: NonNullable<LineProps['dot']> = props => {
+const createSettlementDotRenderer = (settlementKey: string): NonNullable<LineProps['dot']> => props => {
   const { cx, cy } = props as DotProps;
   if (typeof cx !== 'number' || typeof cy !== 'number') return <g />;
-  const settlement = (props as any)?.payload?.settlement;
+  const settlement = (props as any)?.payload?.[settlementKey];
   if (!settlement || (settlement.type !== 'expiry' && settlement.type !== 'roll')) return <g />;
   const color = settlement.pnl >= 0 ? '#22c55e' : '#ef4444';
   if (settlement.type === 'roll') {
@@ -113,14 +113,13 @@ type SeriesConfig = {
   dataKey: string;
   axis: 'value' | 'price';
   strokeDasharray?: string;
+  settlementKey?: string;
 };
 
 type SeriesKey = SeriesConfig['key'];
 
-type SummaryCard = {
-  label: string;
-  value: string;
-  footnote?: string;
+type ChartDatum = BacktestCurvePoint & {
+  [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
 type ChartDatum = BacktestCurvePoint & {
@@ -213,7 +212,14 @@ export function BacktestResults({
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
       { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
-      { key: 'coveredCall', label: formatStrategyLabel(primaryStrategy.config), color: getStrategyColor(0), dataKey: 'CoveredCall', axis: 'value' },
+      {
+        key: 'coveredCall',
+        label: formatStrategyLabel(primaryStrategy.config),
+        color: getStrategyColor(0),
+        dataKey: 'CoveredCall',
+        axis: 'value',
+        settlementKey: 'settlement',
+      },
       { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
       {
         key: 'callStrike',
@@ -231,6 +237,7 @@ export function BacktestResults({
     () =>
       comparisonStrategies.map((entry, index) => {
         const dataKey = `CoveredCall_${entry.id}`;
+        const settlementKey = `settlement_${entry.id}`;
         const config: SeriesConfig = {
           key: `strategy-${entry.id}`,
           label: formatStrategyLabel(entry.config),
@@ -238,6 +245,7 @@ export function BacktestResults({
           dataKey,
           axis: 'value',
           strokeDasharray: '5 3',
+          settlementKey,
         };
         return { config, curve: entry.result.curve };
       }),
@@ -253,6 +261,10 @@ export function BacktestResults({
       for (let i = 0; i < base.length; i++) {
         const value = curve[i]?.CoveredCall;
         base[i][config.dataKey] = value ?? null;
+        if (config.settlementKey) {
+          const settlementValue = curve[i]?.settlement ?? null;
+          base[i][config.settlementKey] = settlementValue;
+        }
       }
     });
     return base;
@@ -263,6 +275,26 @@ export function BacktestResults({
     const dynamic = comparisonSeriesList.map(series => series.config);
     return [...base, ...dynamic];
   }, [BASE_SERIES_CONFIG, comparisonSeriesList]);
+
+  const settlementDotRenderers = useMemo(() => {
+    const map: Record<string, NonNullable<LineProps['dot']>> = {};
+    seriesConfig.forEach(series => {
+      if (series.settlementKey) {
+        map[series.key] = createSettlementDotRenderer(series.settlementKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
+
+  const settlementKeyByDataKey = useMemo(() => {
+    const map = new Map<string, string>();
+    seriesConfig.forEach(series => {
+      if (series.settlementKey) {
+        map.set(series.dataKey, series.settlementKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
 
   useEffect(() => {
     setSeriesVisibility(prev => {
@@ -812,7 +844,6 @@ export function BacktestResults({
     ({ active, payload, label }: TooltipProps<number, string>) => {
       if (!active || !payload || !payload.length) return null;
       const point = payload[0].payload as any;
-      const settlement = point.settlement;
       const callDelta = point.CallDelta;
       const rollMarks = rollPoints.filter(event => event.date === point.date);
       const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
@@ -820,12 +851,21 @@ export function BacktestResults({
       const formattedLabel = typeof label === 'string' ? formatDateWithWeekday(label) : label;
       const strategyValues = payload
         .filter(item => typeof item.dataKey === 'string' && item.dataKey.startsWith('CoveredCall'))
-        .map(item => ({
-          key: item.dataKey as string,
-          label: item.name,
-          color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
-          value: typeof item.value === 'number' ? item.value : null,
-        }));
+        .map(item => {
+          const dataKey = item.dataKey as string;
+          const settlementKey = settlementKeyByDataKey.get(dataKey);
+          const settlementValue = settlementKey ? point[settlementKey] : null;
+          return {
+            key: dataKey,
+            dataKey,
+            label: item.name,
+            color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
+            value: typeof item.value === 'number' ? item.value : null,
+            settlement: settlementValue,
+          };
+        });
+      const primaryEntry = strategyValues.find(entry => entry.dataKey === 'CoveredCall');
+      const settlement = primaryEntry?.settlement ?? null;
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
           <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
@@ -835,7 +875,26 @@ export function BacktestResults({
               <div key={entry.key} className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
                   <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
-                  {entry.label}
+                  <span className="flex items-center gap-2">
+                    {entry.label}
+                    {entry.settlement && (
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
+                          entry.settlement.type === 'roll'
+                            ? entry.settlement.rollReason === 'delta'
+                              ? 'bg-indigo-100 text-indigo-600'
+                              : 'bg-slate-200 text-slate-600'
+                            : 'bg-emerald-100 text-emerald-600'
+                        }`}
+                      >
+                        {entry.settlement.type === 'roll'
+                          ? entry.settlement.rollReason === 'delta'
+                            ? 'Delta Roll'
+                            : '例行換倉'
+                          : '到期結算'}
+                      </span>
+                    )}
+                  </span>
                 </span>
                 <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
               </div>
@@ -882,7 +941,7 @@ export function BacktestResults({
         </div>
       );
     },
-    [rollPoints],
+    [formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
   );
 
   const renderedData = useMemo(() => {
@@ -895,57 +954,6 @@ export function BacktestResults({
 
   const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
   const canDownloadCsv = useMemo(() => result.curve.length > 0, [result.curve.length]);
-
-  const summaryCards: SummaryCard[] = useMemo(() => {
-    const formatPct = (value: number) => `${(value * 100).toFixed(2)}%`;
-    const annualized = (value: number) => {
-      const years = Math.max(1 / 12, result.curve.length / 252);
-      return `${(((1 + value) ** (1 / years) - 1) * 100).toFixed(2)}%`;
-    };
-    return [
-      {
-        label: 'Buy & Hold 報酬率',
-        value: formatPct(result.bhReturn),
-        footnote: `年化：約 ${annualized(result.bhReturn)}`,
-      },
-      {
-        label: `${formatStrategyLabel(primaryStrategy.config)} 報酬率`,
-        value: formatPct(result.ccReturn),
-        footnote: `年化：約 ${annualized(result.ccReturn)}`,
-      },
-      {
-        label: `${formatStrategyLabel(primaryStrategy.config)} 勝率`,
-        value: `${(result.ccWinRate * 100).toFixed(1)}%`,
-        footnote: `樣本數：${result.ccSettlementCount} 次結算`,
-      },
-      {
-        label: '隱含波動率 (IV)',
-        value: `${(result.ivUsed * 100).toFixed(2)}%`,
-        footnote: `歷史波動率估計：${(result.hv * 100).toFixed(2)}%`,
-      },
-    ];
-  }, [formatStrategyLabel, primaryStrategy.config, result]);
-
-  const summaryCardsWithRoll = useMemo(() => {
-    const deltaRollEvents = result.rollEvents.filter(event => (event.rollReason ?? 'delta') === 'delta');
-    if (!deltaRollEvents.length) return summaryCards;
-    const averageRollDelta =
-      deltaRollEvents.reduce((acc, cur) => acc + (typeof cur.delta === 'number' ? cur.delta : 0), 0) /
-      Math.max(1, deltaRollEvents.length);
-    const scheduledText = (() => {
-      if (!primaryStrategy.config.enableRoll) return '已停用自動 Roll';
-      if (primaryStrategy.config.rollDaysBeforeExpiry === 0) return '預設換倉日：到期日 (週五)';
-      return `預設換倉日：到期前 ${primaryStrategy.config.rollDaysBeforeExpiry} 個交易日`;
-    })();
-    return [
-      ...summaryCards,
-      {
-        label: '平均 Roll Delta',
-        value: averageRollDelta ? averageRollDelta.toFixed(2) : '—',
-        footnote: `設定閾值：${result.rollDeltaTrigger.toFixed(2)}（僅統計 Delta 閾值觸發換倉） · ${scheduledText}`,
-      },
-    ];
-  }, [primaryStrategy.config, result.rollDeltaTrigger, result.rollEvents, summaryCards]);
 
   const strategyComparisonRows = useMemo(
     () =>
@@ -1092,23 +1100,26 @@ export function BacktestResults({
                   domain={['auto', 'auto']}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                {seriesConfig.map(series => (
-                  <Line
-                    key={series.key}
-                    type="monotone"
-                    dataKey={series.dataKey}
-                    dot={series.key === 'coveredCall' ? settlementDotRenderer : false}
-                    activeDot={series.key === 'coveredCall' ? { r: 6 } : undefined}
-                    strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
-                    stroke={series.color}
-                    name={series.label}
-                    yAxisId={series.axis}
-                    hide={seriesVisibility[series.key] === false}
-                    strokeDasharray={series.strokeDasharray}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                ))}
+                {seriesConfig.map(series => {
+                  const dotRenderer = settlementDotRenderers[series.key];
+                  return (
+                    <Line
+                      key={series.key}
+                      type="monotone"
+                      dataKey={series.dataKey}
+                      dot={dotRenderer ?? false}
+                      activeDot={dotRenderer ? { r: 6 } : undefined}
+                      strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                      stroke={series.color}
+                      name={series.label}
+                      yAxisId={series.axis}
+                      hide={seriesVisibility[series.key] === false}
+                      strokeDasharray={series.strokeDasharray}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                  );
+                })}
                 {deltaRollPoints.map((point, idx) => (
                   <ReferenceLine
                     key={`roll-${point.date}-${idx}`}
@@ -1138,18 +1149,44 @@ export function BacktestResults({
       {!isFullscreen && <div className="mx-6 mt-4 md:mx-8">{renderScrollerTrack()}</div>}
 
       <section className={`${panelClass} p-6 md:p-8`}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-900">回測總結</h2>
-          <span className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Summary</span>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">策略比較</h2>
+          <p className="text-xs text-slate-500">所有自訂策略將與 Buy &amp; Hold 同列呈現以便比較。</p>
         </div>
-        <div className="grid grid-cols-1 gap-4 text-sm [grid-auto-rows:1fr] sm:grid-cols-2 lg:grid-cols-4">
-          {summaryCardsWithRoll.map(card => (
-            <div key={card.label} className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{card.label}</div>
-              <div className="mt-3 text-2xl font-semibold leading-tight text-slate-900">{card.value}</div>
-              {card.footnote && <div className="mt-auto text-xs text-slate-400">{card.footnote}</div>}
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">策略</th>
+                <th className="px-4 py-3 text-right font-semibold">最終資產</th>
+                <th className="px-4 py-3 text-right font-semibold">總報酬</th>
+                <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
+                <th className="px-4 py-3 text-right font-semibold">勝率 / 次數</th>
+                <th className="px-4 py-3 text-right font-semibold">相對 Buy &amp; Hold</th>
+                <th className="px-4 py-3 font-semibold">Roll 策略</th>
+                <th className="px-4 py-3 font-semibold">進階選項</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {strategyComparisonRows.map(row => (
+                <tr key={row.id} className="bg-white/70 hover:bg-indigo-50/40">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
+                      <span className="font-medium text-slate-700">{row.label}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
+                  <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.winRate}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.relativeReturn}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.rollDescription}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.options}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         <div className="mt-8 overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
