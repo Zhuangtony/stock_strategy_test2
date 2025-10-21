@@ -1156,7 +1156,7 @@ export function BacktestResults({
                 ))}
               </LineChart>
             </ResponsiveContainer>
-            <div className="pointer-events-none absolute right-4 top-4 z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs">
+            <div className="pointer-events-none absolute left-4 top-4 z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs">
               {seriesConfig.map(series => {
                 const active = seriesVisibility[series.key] ?? true;
                 const dashed = Boolean(series.strokeDasharray);
