@@ -3,16 +3,18 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import {
+  Area,
   CartesianGrid,
   Line,
   LineChart,
   ReferenceArea,
-  ReferenceLine,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -28,6 +30,11 @@ import type { StrategyConfigInput, StrategyRunResult } from './types';
 
 const VALUE_AXIS_WIDTH = 80;
 const PRICE_AXIS_WIDTH = 72;
+const VALUE_AXIS_TICK_COLOR = '#1f2937';
+const PRICE_AXIS_TICK_COLOR = '#475569';
+const VALUE_AXIS_LINE_COLOR = '#cbd5f5';
+const PRICE_AXIS_LINE_COLOR = '#bfdbfe';
+const GRID_STROKE_COLOR = '#e2e8f0';
 
 const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
 const formatDateWithWeekday = (value: string) => {
@@ -59,51 +66,6 @@ const createSettlementDotRenderer = (settlementKey: string): NonNullable<LinePro
   );
 };
 
-const RollMarkerLabel = ({
-  viewBox,
-  x,
-}: {
-  viewBox?: { x?: number; y?: number; width?: number; height?: number };
-  x?: number;
-}) => {
-  if (!viewBox && typeof x !== 'number') return null;
-  const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
-  const chartTop = viewBox?.y ?? 0;
-  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox?.x ?? 0 : 0;
-  const chartRight = viewBox && viewBox.width && viewBox.width > 0 ? chartLeft + viewBox.width : null;
-  const labelWidth = 92;
-  const labelHeight = 22;
-  const offsetY = 10;
-
-  let rectX = baseX - labelWidth / 2;
-  if (chartRight != null) {
-    rectX = Math.min(rectX, chartRight - labelWidth - 4);
-  }
-  rectX = Math.max(chartLeft + 4, rectX);
-  const rectY = chartTop + offsetY;
-  const textX = rectX + labelWidth / 2;
-  const textY = rectY + labelHeight / 2 + 4;
-
-  return (
-    <g>
-      <rect
-        x={rectX}
-        y={rectY}
-        width={labelWidth}
-        height={labelHeight}
-        rx={labelHeight / 2}
-        fill="#ede9fe"
-        stroke="#5b21b6"
-        strokeWidth={1}
-        opacity={0.95}
-      />
-      <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
-        Delta Roll-up
-      </text>
-    </g>
-  );
-};
-
 const formatCurrency = (value: number, fractionDigits = 0) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: fractionDigits }).format(value);
 
@@ -118,6 +80,8 @@ type SeriesConfig = {
   axis: 'value' | 'price';
   strokeDasharray?: string;
   settlementKey?: string;
+  sharesKey?: string;
+  strategyId?: string;
 };
 
 type SeriesKey = SeriesConfig['key'];
@@ -125,6 +89,22 @@ type SeriesKey = SeriesConfig['key'];
 type ChartDatum = BacktestCurvePoint & {
   [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
+
+type StrategySeriesKeys = {
+  value: string;
+  shares: string;
+  strike: string;
+  delta: string;
+  settlement: string;
+};
+
+const buildStrategySeriesKeys = (strategyId: string): StrategySeriesKeys => ({
+  value: `CoveredCall_${strategyId}`,
+  shares: `CoveredCallShares_${strategyId}`,
+  strike: `CallStrike_${strategyId}`,
+  delta: `CallDelta_${strategyId}`,
+  settlement: `settlement_${strategyId}`,
+});
 
 type EarningsWeekRange = {
   startIdx: number;
@@ -140,6 +120,7 @@ type StrategyComparisonRow = {
   color: string;
   label: string;
   shares: string;
+  shareDelta: string;
   finalValue: string;
   totalReturn: string;
   annualized: string;
@@ -170,6 +151,14 @@ export function BacktestResults({
   const result = primaryStrategy.result;
   const primaryParams = primaryStrategy.params;
   const comparisonStrategies = strategies.slice(1);
+  const strategySeriesKeys = useMemo(() => {
+    const map = new Map<string, StrategySeriesKeys>();
+    strategies.forEach(entry => {
+      map.set(entry.id, buildStrategySeriesKeys(entry.id));
+    });
+    return map;
+  }, [strategies]);
+  const primarySeriesKeys = strategySeriesKeys.get(primaryStrategy.id) ?? buildStrategySeriesKeys(primaryStrategy.id);
   const getStrategyColor = useCallback(
     (index: number) => (index === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(index - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length]),
     [],
@@ -195,6 +184,16 @@ export function BacktestResults({
       maximumFractionDigits: decimals,
     });
   }, []);
+  const formatShareDelta = useCallback((value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    if (value === 0) return '0';
+    const decimals = Number.isInteger(value) ? 0 : 2;
+    const formatted = Math.abs(value).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals,
+    });
+    return value > 0 ? `+${formatted}` : `-${formatted}`;
+  }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
     buyAndHold: true,
@@ -217,6 +216,7 @@ export function BacktestResults({
     element: null,
   });
   const [isScrollerDragging, setIsScrollerDragging] = useState(false);
+  const coveredCallAreaId = useId();
 
   const handleEnterFullscreen = useCallback(() => {
     const container = chartContainerRef.current;
@@ -244,14 +244,23 @@ export function BacktestResults({
 
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
-      { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
+      {
+        key: 'buyAndHold',
+        label: 'Buy & Hold',
+        color: '#2563eb',
+        dataKey: 'BuyAndHold',
+        axis: 'value',
+        sharesKey: 'BuyAndHoldShares',
+      },
       {
         key: 'coveredCall',
         label: formatStrategyLabel(primaryStrategy.config),
         color: getStrategyColor(0),
-        dataKey: 'CoveredCall',
+        dataKey: primarySeriesKeys.value,
         axis: 'value',
-        settlementKey: 'settlement',
+        settlementKey: primarySeriesKeys.settlement,
+        sharesKey: primarySeriesKeys.shares,
+        strategyId: primaryStrategy.id,
       },
       {
         key: 'priceSpread',
@@ -261,55 +270,93 @@ export function BacktestResults({
         axis: 'price',
       },
     ],
-    [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
+    [
+      formatStrategyLabel,
+      getStrategyColor,
+      primarySeriesKeys.shares,
+      primarySeriesKeys.settlement,
+      primarySeriesKeys.value,
+      primaryStrategy.config,
+      primaryStrategy.id,
+    ],
   );
 
   const buyAndHoldColor = BASE_SERIES_CONFIG[0]?.color ?? '#2563eb';
+  const coveredCallColor = getStrategyColor(0);
 
   const comparisonSeriesList = useMemo(
     () =>
       comparisonStrategies.map((entry, index) => {
-        const dataKey = `CoveredCall_${entry.id}`;
-        const settlementKey = `settlement_${entry.id}`;
+        const keys = strategySeriesKeys.get(entry.id) ?? buildStrategySeriesKeys(entry.id);
         const config: SeriesConfig = {
           key: `strategy-${entry.id}`,
           label: formatStrategyLabel(entry.config),
           color: getStrategyColor(index + 1),
-          dataKey,
+          dataKey: keys.value,
           axis: 'value',
           strokeDasharray: '5 3',
-          settlementKey,
+          settlementKey: keys.settlement,
+          sharesKey: keys.shares,
+          strategyId: entry.id,
         };
         return { config, curve: entry.result.curve };
       }),
-    [comparisonStrategies, formatStrategyLabel, getStrategyColor],
+    [comparisonStrategies, formatStrategyLabel, getStrategyColor, strategySeriesKeys],
   );
 
   const chartData = useMemo(() => {
+    if (!Array.isArray(result.curve) || result.curve.length === 0) return [] as ChartDatum[];
     const base = result.curve.map(point => {
-      const copy = { ...point } as ChartDatum;
-      const rawUnderlying = copy.UnderlyingPrice;
-      const rawStrike = copy.CallStrike;
-      const underlying = typeof rawUnderlying === 'number' ? rawUnderlying : null;
-      const strike = typeof rawStrike === 'number' ? rawStrike : null;
-      copy.PriceSpread = underlying != null && strike != null ? underlying - strike : null;
-      return copy;
-    }) as ChartDatum[];
-    if (!comparisonSeriesList.length) return base;
-    comparisonSeriesList.forEach(series => {
-      const { curve, config } = series;
-      if (!Array.isArray(curve) || !curve.length) return;
-      for (let i = 0; i < base.length; i++) {
-        const value = curve[i]?.CoveredCall;
-        base[i][config.dataKey] = value ?? null;
-        if (config.settlementKey) {
-          const settlementValue = curve[i]?.settlement ?? null;
-          base[i][config.settlementKey] = settlementValue;
-        }
-      }
+      const row: ChartDatum = {
+        date: point.date,
+        BuyAndHold: point.BuyAndHold,
+        BuyAndHoldShares: point.BuyAndHoldShares,
+        UnderlyingPrice: point.UnderlyingPrice,
+      } as ChartDatum;
+      return row;
     });
+
+    const baseDates = result.curve.map(point => point.date);
+
+    strategies.forEach(entry => {
+      const keys = strategySeriesKeys.get(entry.id) ?? buildStrategySeriesKeys(entry.id);
+      const pointMap = new Map<string, BacktestCurvePoint>();
+      entry.result.curve.forEach(point => {
+        pointMap.set(point.date, point);
+      });
+      baseDates.forEach((date, idx) => {
+        const target = base[idx];
+        if (!target) return;
+        const source = pointMap.get(date);
+        if (!source) {
+          target[keys.value] = null;
+          target[keys.shares] = null;
+          target[keys.strike] = null;
+          target[keys.delta] = null;
+          target[keys.settlement] = null;
+          return;
+        }
+        const value = source.CoveredCall;
+        target[keys.value] = typeof value === 'number' ? value : value ?? null;
+        const sharesValue = source.CoveredCallShares;
+        target[keys.shares] = typeof sharesValue === 'number' ? sharesValue : sharesValue ?? null;
+        const strikeValue = source.CallStrike;
+        target[keys.strike] = typeof strikeValue === 'number' ? strikeValue : strikeValue ?? null;
+        const deltaValue = source.CallDelta;
+        target[keys.delta] = typeof deltaValue === 'number' ? deltaValue : deltaValue ?? null;
+        target[keys.settlement] = source.settlement ?? null;
+      });
+    });
+
+    base.forEach(row => {
+      const strikeRaw = row[primarySeriesKeys.strike];
+      const strike = typeof strikeRaw === 'number' ? strikeRaw : strikeRaw ?? null;
+      const underlying = typeof row.UnderlyingPrice === 'number' ? row.UnderlyingPrice : row.UnderlyingPrice ?? null;
+      row.PriceSpread = strike != null && underlying != null ? (underlying as number) - (strike as number) : null;
+    });
+
     return base;
-  }, [comparisonSeriesList, result.curve]);
+  }, [primarySeriesKeys.strike, result.curve, strategies, strategySeriesKeys]);
 
   const baseDates = useMemo(() => result.curve.map(point => point.date), [result.curve]);
 
@@ -396,12 +443,22 @@ export function BacktestResults({
     return map;
   }, [seriesConfig]);
 
-  const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
+  const sharesKeyByDataKey = useMemo(() => {
+    const map = new Map<string, string>();
+    seriesConfig.forEach(series => {
+      if (series.sharesKey) {
+        map.set(series.dataKey, series.sharesKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
+
+  const chartMargin = useMemo(() => ({ top: 32, right: 32, bottom: 44, left: 20 }), []);
   const { top: chartMarginTop, left: chartMarginLeft } = chartMargin;
   const legendStyle = useMemo<React.CSSProperties>(
     () => ({
-      top: chartMarginTop + 8,
-      left: chartMarginLeft + VALUE_AXIS_WIDTH + 8,
+      top: Math.max(12, chartMarginTop - 12),
+      left: chartMarginLeft + VALUE_AXIS_WIDTH + 12,
     }),
     [chartMarginLeft, chartMarginTop],
   );
@@ -781,59 +838,76 @@ export function BacktestResults({
       return str;
     };
 
-    const baseRows = result.curve;
-    const comparisonColumns = comparisonStrategies.map(entry => {
-      const label = `${formatStrategyLabel(entry.config)} Value`;
-      const map = new Map<string, number | null>();
+    const strategyPointMaps = strategies.map(entry => {
+      const map = new Map<string, BacktestCurvePoint>();
       entry.result.curve.forEach(point => {
-        const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
-        map.set(point.date, value);
+        map.set(point.date, point);
       });
-      return { label, map };
+      return { map };
     });
 
     const headers = [
       'Date',
-      'Buy & Hold Value',
-      `${formatStrategyLabel(primaryStrategy.config)} Value`,
       'Underlying Price',
-      'Call Strike',
-      'Call Delta',
-      'Settlement Type',
-      'Settlement PnL',
-      'Settlement Strike',
-      'Settlement Underlying',
-      'Settlement Premium',
-      'Settlement Qty',
-      ...comparisonColumns.map(col => col.label),
+      'Buy & Hold Value',
+      'Buy & Hold Shares',
+      ...strategies.flatMap(entry => {
+        const label = formatStrategyLabel(entry.config);
+        return [
+          `${label} Value`,
+          `${label} Shares`,
+          `${label} Call Strike`,
+          `${label} Call Delta`,
+          `${label} Settlement Type`,
+          `${label} Settlement PnL`,
+          `${label} Settlement Strike`,
+          `${label} Settlement Underlying`,
+          `${label} Settlement Premium`,
+          `${label} Settlement Qty`,
+          `${label} Roll Reason`,
+        ];
+      }),
     ];
 
     const rows = [headers.map(serialize).join(',')];
 
-    for (const point of baseRows as any[]) {
-      const settlement = point.settlement ?? null;
+    result.curve.forEach(basePoint => {
+      const date = basePoint.date;
+      const underlyingValue = basePoint.UnderlyingPrice;
+      const buyAndHoldValue = basePoint.BuyAndHold;
+      const buyAndHoldSharesValue = basePoint.BuyAndHoldShares;
+
       const rowValues: (string | number | null | undefined)[] = [
-        point.date,
-        typeof point.BuyAndHold === 'number' ? point.BuyAndHold : point.BuyAndHold ?? null,
-        typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null,
-        typeof point.UnderlyingPrice === 'number' ? point.UnderlyingPrice : point.UnderlyingPrice ?? null,
-        typeof point.CallStrike === 'number' ? point.CallStrike : point.CallStrike ?? null,
-        typeof point.CallDelta === 'number' ? point.CallDelta : point.CallDelta ?? null,
-        settlement?.type ?? null,
-        typeof settlement?.pnl === 'number' ? settlement.pnl : settlement?.pnl ?? null,
-        typeof settlement?.strike === 'number' ? settlement.strike : settlement?.strike ?? null,
-        typeof settlement?.underlying === 'number' ? settlement.underlying : settlement?.underlying ?? null,
-        typeof settlement?.premium === 'number' ? settlement.premium : settlement?.premium ?? null,
-        typeof settlement?.qty === 'number' ? settlement.qty : settlement?.qty ?? null,
+        date,
+        typeof underlyingValue === 'number' ? underlyingValue : underlyingValue ?? null,
+        typeof buyAndHoldValue === 'number' ? buyAndHoldValue : buyAndHoldValue ?? null,
+        typeof buyAndHoldSharesValue === 'number' ? buyAndHoldSharesValue : buyAndHoldSharesValue ?? null,
       ];
 
-      comparisonColumns.forEach(col => {
-        const value = col.map.get(point.date);
-        rowValues.push(typeof value === 'number' ? value : value ?? null);
+      strategyPointMaps.forEach(({ map }) => {
+        const point = map.get(date) ?? null;
+        const value = point?.CoveredCall;
+        const sharesValue = point?.CoveredCallShares;
+        const strikeValue = point?.CallStrike;
+        const deltaValue = point?.CallDelta;
+        const settlement = point?.settlement ?? null;
+        rowValues.push(
+          typeof value === 'number' ? value : value ?? null,
+          typeof sharesValue === 'number' ? sharesValue : sharesValue ?? null,
+          typeof strikeValue === 'number' ? strikeValue : strikeValue ?? null,
+          typeof deltaValue === 'number' ? deltaValue : deltaValue ?? null,
+          settlement?.type ?? null,
+          typeof settlement?.pnl === 'number' ? settlement.pnl : settlement?.pnl ?? null,
+          typeof settlement?.strike === 'number' ? settlement.strike : settlement?.strike ?? null,
+          typeof settlement?.underlying === 'number' ? settlement.underlying : settlement?.underlying ?? null,
+          typeof settlement?.premium === 'number' ? settlement.premium : settlement?.premium ?? null,
+          typeof settlement?.qty === 'number' ? settlement.qty : settlement?.qty ?? null,
+          settlement?.type === 'roll' ? settlement.rollReason ?? null : null,
+        );
       });
 
       rows.push(rowValues.map(serialize).join(','));
-    }
+    });
 
     const csv = rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -846,7 +920,7 @@ export function BacktestResults({
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [comparisonStrategies, end, formatStrategyLabel, primaryStrategy.config, result.curve, start, ticker]);
+  }, [end, formatStrategyLabel, result.curve, start, strategies, ticker]);
 
   useEffect(() => {
     if (!scrollerMetrics.hasWindow) {
@@ -965,7 +1039,8 @@ export function BacktestResults({
     ({ active, payload, label }: TooltipProps<number, string>) => {
       if (!active || !payload || !payload.length) return null;
       const point = payload[0].payload as any;
-      const callDelta = point.CallDelta;
+      const callDeltaRaw = primarySeriesKeys ? point[primarySeriesKeys.delta] : null;
+      const callDelta = typeof callDeltaRaw === 'number' ? callDeltaRaw : null;
       const isEarningsWeek = typeof point.date === 'string' && earningsWeekDateSet.has(point.date);
       const rollMarks = rollPoints.filter(event => event.date === point.date);
       const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
@@ -977,6 +1052,9 @@ export function BacktestResults({
           const dataKey = item.dataKey as string;
           const settlementKey = settlementKeyByDataKey.get(dataKey);
           const settlementValue = settlementKey ? point[settlementKey] : null;
+          const sharesKey = sharesKeyByDataKey.get(dataKey);
+          const sharesRaw = sharesKey ? point[sharesKey] : null;
+          const sharesValue = typeof sharesRaw === 'number' ? sharesRaw : null;
           return {
             key: dataKey,
             dataKey,
@@ -984,10 +1062,13 @@ export function BacktestResults({
             color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
             value: typeof item.value === 'number' ? item.value : null,
             settlement: settlementValue,
+            shares: sharesValue,
           };
         });
-      const primaryEntry = strategyValues.find(entry => entry.dataKey === 'CoveredCall');
+      const primaryEntry = strategyValues.find(entry => entry.dataKey === primarySeriesKeys.value);
       const settlement = primaryEntry?.settlement ?? null;
+      const callStrikeRaw = primarySeriesKeys ? point[primarySeriesKeys.strike] : null;
+      const callStrike = typeof callStrikeRaw === 'number' ? callStrikeRaw : null;
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
           <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
@@ -997,39 +1078,55 @@ export function BacktestResults({
                 財報週
               </div>
             )}
-            <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
+            <div>
+              <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
+              {typeof point.BuyAndHoldShares === 'number' && (
+                <div className="mt-[2px] flex items-center justify-between pl-5 text-[10px] text-slate-500">
+                  <span>持股數</span>
+                  <span>{`${formatShareCount(point.BuyAndHoldShares)} 股`}</span>
+                </div>
+              )}
+            </div>
             {strategyValues.map(entry => (
-              <div key={entry.key} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+              <div key={entry.key} className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">
-                    {entry.label}
-                    {entry.settlement && (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
-                          entry.settlement.type === 'roll'
+                    <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+                    <span className="flex items-center gap-2">
+                      {entry.label}
+                      {entry.settlement && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
+                            entry.settlement.type === 'roll'
+                              ? entry.settlement.rollReason === 'delta'
+                                ? 'bg-indigo-100 text-indigo-600'
+                                : 'bg-slate-200 text-slate-600'
+                              : 'bg-emerald-100 text-emerald-600'
+                          }`}
+                        >
+                          {entry.settlement.type === 'roll'
                             ? entry.settlement.rollReason === 'delta'
-                              ? 'bg-indigo-100 text-indigo-600'
-                              : 'bg-slate-200 text-slate-600'
-                            : 'bg-emerald-100 text-emerald-600'
-                        }`}
-                      >
-                        {entry.settlement.type === 'roll'
-                          ? entry.settlement.rollReason === 'delta'
-                            ? 'Delta Roll'
-                            : '例行換倉'
-                          : '到期結算'}
-                      </span>
-                    )}
+                              ? 'Delta Roll'
+                              : '例行換倉'
+                            : '到期結算'}
+                        </span>
+                      )}
+                    </span>
                   </span>
-                </span>
-                <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+                  <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+                </div>
+                {entry.shares != null && (
+                  <div className="flex items-center justify-between pl-5 text-[10px] text-slate-500">
+                    <span>持股數</span>
+                    <span>{`${formatShareCount(entry.shares)} 股`}</span>
+                  </div>
+                )}
               </div>
             ))}
             {typeof point.UnderlyingPrice === 'number' && (
               <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
             )}
-            {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
+            {typeof callStrike === 'number' && <div>履約價：{callStrike.toFixed(2)}</div>}
             {typeof point.PriceSpread === 'number' && (
               <div>價差（股價-履約價）：{formatCurrency(point.PriceSpread, 2)}</div>
             )}
@@ -1073,7 +1170,17 @@ export function BacktestResults({
         </div>
       );
     },
-    [earningsWeekDateSet, formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
+    [
+      earningsWeekDateSet,
+      formatDateWithWeekday,
+      formatShareCount,
+      primarySeriesKeys.delta,
+      primarySeriesKeys.strike,
+      primarySeriesKeys.value,
+      rollPoints,
+      settlementKeyByDataKey,
+      sharesKeyByDataKey,
+    ],
   );
 
   const renderedData = useMemo(() => {
@@ -1127,6 +1234,8 @@ export function BacktestResults({
   const strategyComparisonRows = useMemo<StrategyComparisonRow[]>(() => {
     if (!strategies.length) return [];
 
+    const baseResult = strategies[0]?.result;
+    const baseShareCount = baseResult?.bhShares ?? null;
     const strategyRows = strategies.map((entry, index) => {
       const years = Math.max(1 / 12, entry.result.curve.length / 252);
       const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
@@ -1144,11 +1253,16 @@ export function BacktestResults({
       if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
       const options = optionFlags.length ? optionFlags.join(' / ') : '—';
       const finalValue = entry.result.curve.at(-1)?.CoveredCall;
+      const shareDeltaValue =
+        baseShareCount != null && typeof entry.result.ccShares === 'number'
+          ? entry.result.ccShares - baseShareCount
+          : null;
       return {
         id: entry.id,
         color: getStrategyColor(index),
         label: formatStrategyLabel(entry.config),
         shares: formatShareCount(entry.result.ccShares),
+        shareDelta: formatShareDelta(shareDeltaValue),
         finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
         totalReturn: formatSignedPercent(entry.result.ccReturn),
         annualized: formatSignedPercent(annualized),
@@ -1159,7 +1273,6 @@ export function BacktestResults({
       };
     });
 
-    const baseResult = strategies[0]?.result;
     const years = baseResult ? Math.max(1 / 12, baseResult.curve.length / 252) : null;
     const annualized = years != null && baseResult ? (1 + baseResult.bhReturn) ** (1 / years) - 1 : null;
     const buyHoldFinal = baseResult?.curve.at(-1)?.BuyAndHold ?? null;
@@ -1170,6 +1283,7 @@ export function BacktestResults({
       color: buyAndHoldColor,
       label: 'Buy & Hold',
       shares: formatShareCount(buyHoldShares),
+      shareDelta: '—',
       finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '—',
       totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '—',
       annualized: annualized != null ? formatSignedPercent(annualized) : '—',
@@ -1184,11 +1298,14 @@ export function BacktestResults({
   }, [
     buyAndHoldColor,
     formatShareCount,
+    formatShareDelta,
     formatSignedPercent,
     formatStrategyLabel,
     getStrategyColor,
     strategies,
   ]);
+
+  const isCoveredCallVisible = seriesVisibility.coveredCall !== false;
 
   return (
     <React.Fragment>
@@ -1281,37 +1398,66 @@ export function BacktestResults({
         <ChartErrorBoundary>
           <div
             ref={chartContainerRef}
-            className={`relative h-[420px] w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-b from-white to-indigo-50/40 p-4 shadow-inner shadow-slate-200/60 ${
-              isFullscreen ? 'fixed inset-8 z-50 h-[calc(100vh-4rem)] w-[calc(100vw-4rem)] bg-white/95 p-6' : ''
+            className={`relative h-[420px] w-full overflow-hidden rounded-3xl border border-slate-200/70 bg-white p-5 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.45)] ${
+              isFullscreen
+                ? 'fixed inset-8 z-50 h-[calc(100vh-4rem)] w-[calc(100vw-4rem)] rounded-3xl bg-white p-8 ring-1 ring-slate-200/80 shadow-2xl'
+                : ''
             }`}
             onWheel={handleWheelZoom}
             onMouseDown={handleMouseDown}
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={renderedData} margin={chartMargin}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
+                <defs>
+                  <linearGradient id={coveredCallAreaId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={coveredCallColor} stopOpacity={0.26} />
+                    <stop offset="100%" stopColor={coveredCallColor} stopOpacity={0.04} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 6" stroke={GRID_STROKE_COLOR} strokeOpacity={0.8} />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: '#1e293b' }}
+                  tickLine={false}
+                  axisLine={{ stroke: GRID_STROKE_COLOR, strokeWidth: 1 }}
+                  tickMargin={12}
                   minTickGap={30}
                   tickFormatter={formatDateTick}
                 />
                 <YAxis
                   yAxisId="value"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: VALUE_AXIS_TICK_COLOR }}
+                  tickLine={false}
+                  axisLine={{ stroke: VALUE_AXIS_LINE_COLOR, strokeWidth: 1 }}
                   tickFormatter={formatValueTick}
                   width={VALUE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
+                  tickMargin={12}
                 />
                 <YAxis
                   yAxisId="price"
                   orientation="right"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: PRICE_AXIS_TICK_COLOR }}
+                  tickLine={false}
+                  axisLine={{ stroke: PRICE_AXIS_LINE_COLOR, strokeWidth: 1 }}
                   tickFormatter={formatPriceTick}
                   width={PRICE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
+                  tickMargin={10}
                 />
                 <Tooltip content={<CustomTooltip />} />
+                {isCoveredCallVisible && (
+                  <Area
+                    type="monotone"
+                    dataKey={primarySeriesKeys.value}
+                    yAxisId="value"
+                    stroke="none"
+                    fill={`url(#${coveredCallAreaId})`}
+                    fillOpacity={1}
+                    isAnimationActive={false}
+                    connectNulls
+                  />
+                )}
                 {earningsWeekRanges.map(range => (
                   <ReferenceArea
                     key={`earnings-${range.startIdx}-${range.endIdx}`}
@@ -1329,21 +1475,29 @@ export function BacktestResults({
                       fill: '#854d0e',
                       fontSize: 11,
                       fontWeight: 600,
-                      offset: 12,
+                      offset: 16,
                     }}
                   />
                 ))}
                 {seriesConfig.map(series => {
                   const dotRenderer = showSettlementDots ? settlementDotRenderers[series.key] : undefined;
+                  const isPrimarySeries = series.key === 'coveredCall';
+                  const isBenchmarkSeries = series.key === 'buyAndHold';
+                  const strokeWidth = isPrimarySeries ? 3.2 : series.axis === 'value' ? (isBenchmarkSeries ? 2.4 : 1.8) : 1.6;
+                  const baseOpacity = series.axis === 'price' ? 0.55 : 0.65;
+                  const strokeOpacity = isPrimarySeries ? 1 : isBenchmarkSeries ? 0.92 : baseOpacity;
                   return (
                     <Line
                       key={series.key}
                       type="monotone"
                       dataKey={series.dataKey}
                       dot={dotRenderer ?? false}
-                      activeDot={dotRenderer ? { r: 4.5 } : undefined}
-                      strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                      activeDot={dotRenderer ? { r: isPrimarySeries ? 5 : 4 } : undefined}
+                      strokeWidth={strokeWidth}
                       stroke={series.color}
+                      strokeOpacity={strokeOpacity}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       name={series.label}
                       yAxisId={series.axis}
                       hide={seriesVisibility[series.key] === false}
@@ -1353,21 +1507,30 @@ export function BacktestResults({
                     />
                   );
                 })}
-                {deltaRollPoints.map((point, idx) => (
-                  <ReferenceLine
-                    key={`roll-${point.date}-${idx}`}
-                    x={point.date}
-                    stroke="#6366f1"
-                    strokeDasharray="4 2"
-                    strokeOpacity={0.6}
-                    yAxisId="value"
-                    label={<RollMarkerLabel />}
-                  />
-                ))}
+                {deltaRollPoints.map((point, idx) => {
+                  const value =
+                    typeof point.totalValue === 'number' && Number.isFinite(point.totalValue)
+                      ? point.totalValue
+                      : null;
+                  if (value == null) return null;
+                  return (
+                    <ReferenceDot
+                      key={`roll-${point.date}-${idx}`}
+                      x={point.date}
+                      y={value}
+                      yAxisId="value"
+                      r={6}
+                      fill="#fbbf24"
+                      stroke="#b45309"
+                      strokeWidth={1.8}
+                      ifOverflow="extendDomain"
+                    />
+                  );
+                })}
               </LineChart>
             </ResponsiveContainer>
             <div
-              className="pointer-events-none absolute z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs"
+              className="pointer-events-none absolute z-10 flex max-h-[70%] w-[min(240px,100%)] flex-col gap-2 overflow-y-auto text-xs"
               style={legendStyle}
             >
               {seriesConfig.map(series => {
@@ -1376,7 +1539,7 @@ export function BacktestResults({
                 return (
                   <div
                     key={`legend-${series.key}`}
-                    className={`flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm backdrop-blur ${
+                    className={`flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/95 px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm backdrop-blur ${
                       active ? '' : 'opacity-45'
                     }`}
                   >
@@ -1414,7 +1577,8 @@ export function BacktestResults({
             <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">策略</th>
-                <th className="px-4 py-3 text-right font-semibold">持股數</th>
+                <th className="px-4 py-3 text-right font-semibold">最終持股</th>
+                <th className="px-4 py-3 text-right font-semibold">持股差異 (vs Buy &amp; Hold)</th>
                 <th className="px-4 py-3 text-right font-semibold">最終資產</th>
                 <th className="px-4 py-3 text-right font-semibold">總報酬</th>
                 <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
@@ -1438,7 +1602,12 @@ export function BacktestResults({
                       <span className="font-medium text-slate-700">{row.label}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.shares}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {row.shares !== '—' ? `${row.shares} 股` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {row.shareDelta !== '—' ? `${row.shareDelta} 股` : '—'}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
                   <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>

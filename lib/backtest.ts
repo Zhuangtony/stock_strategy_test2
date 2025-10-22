@@ -46,6 +46,8 @@ export interface BacktestCurvePoint {
   UnderlyingPrice: number;
   CallStrike: number | null;
   CallDelta: number | null;
+  BuyAndHoldShares: number;
+  CoveredCallShares: number;
   settlement: null | {
     pnl: number;
     strike: number;
@@ -73,6 +75,14 @@ export interface RunBacktestResult {
   effectiveTargetDelta: number;
   rollDeltaTrigger: number;
 }
+
+type ActiveCallPosition = {
+  strike: number;
+  premium: number;
+  qty: number;
+  sellIdx: number;
+  expIdx: number;
+};
 
 function getISOWeek(date: Date) {
   const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -124,10 +134,11 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       ? params.rollDeltaThreshold
       : 0.7,
   );
-  const scheduledRollOffset =
+  const rawRollOffset =
     typeof params.rollDaysBeforeExpiry === 'number' && Number.isFinite(params.rollDaysBeforeExpiry)
       ? Math.max(0, Math.min(4, Math.floor(params.rollDaysBeforeExpiry)))
-      : null;
+      : 0;
+  const entryOffset = rawRollOffset;
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
   const dateToIndex = new Map<string, number>();
@@ -145,6 +156,41 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     return false;
   };
 
+  const cycles: { start: number; end: number }[] = [];
+  for (let b = 0; b + 1 < boundaries.length; b += 2) {
+    cycles.push({ start: boundaries[b], end: boundaries[b + 1] });
+  }
+  const cycleIndexByEndIdx = new Map<number, number>();
+  cycles.forEach((cycle, idx) => {
+    cycleIndexByEndIdx.set(cycle.end, idx);
+  });
+  const cycleEligible = cycles.map((cycle, idx) => {
+    if (idx === 0) return true;
+    if (!params.skipEarningsWeek) return true;
+    return !hasEarningsInCycle(cycle.start, cycle.end);
+  });
+  const salePlanByIndex = new Map<number, { cycleIdx: number; expIdx: number }>();
+  for (let idx = 0; idx < cycles.length - 1; idx++) {
+    const nextIdx = idx + 1;
+    if (!cycleEligible[nextIdx]) continue;
+    const current = cycles[idx];
+    const next = cycles[nextIdx];
+    let sellIdx = current.end - entryOffset;
+    if (sellIdx < current.start) sellIdx = current.start;
+    if (sellIdx > current.end) sellIdx = current.end;
+    if (sellIdx < 0 || sellIdx >= prices.length) continue;
+    salePlanByIndex.set(sellIdx, { cycleIdx: nextIdx, expIdx: next.end });
+  }
+  const findNextEligibleCycle = (afterExpIdx: number) => {
+    const currentCycleIdx = cycleIndexByEndIdx.get(afterExpIdx);
+    if (currentCycleIdx == null) return null;
+    for (let idx = currentCycleIdx + 1; idx < cycles.length; idx++) {
+      if (!cycleEligible[idx]) continue;
+      return { index: idx, ...cycles[idx] };
+    }
+    return null;
+  };
+
   const bh_value: number[] = [];
   for (let i = 0; i < prices.length; i++) {
     bh_value.push(params.initialCapital + params.shares * prices[i]);
@@ -153,14 +199,9 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   let cash = params.initialCapital;
   let shares = params.shares;
   const baseContractQty = Math.floor(params.shares / 100);
-  let openCall: null | {
-    strike: number;
-    premium: number;
-    qty: number;
-    sellIdx: number;
-    expIdx: number;
-  } = null;
+  let openCall: ActiveCallPosition | null = null;
   const cc_value: number[] = [];
+  const ccSharesSeries: number[] = [];
   const callStrikeSeries: (number | null)[] = [];
   const callDeltaSeries: (number | null)[] = [];
   const settlements: {
@@ -193,20 +234,29 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   for (let i = 0; i < prices.length; i++) {
     const S = prices[i];
 
+    const planForToday = salePlanByIndex.get(i) ?? null;
+
     if (params.enableRoll && openCall) {
-      const daysToExpiry = openCall.expIdx - i;
+      const daysToExpiry: number = openCall.expIdx - i;
       if (daysToExpiry >= 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
         const meetsDeltaTrigger = daysToExpiry > 2 && currentDelta >= rollDeltaTrigger;
-        let meetsScheduledRoll = false;
-        if (scheduledRollOffset !== null) {
-          const daysUntilExpiry = openCall.expIdx - i;
-          if (daysUntilExpiry <= scheduledRollOffset) {
-            meetsScheduledRoll = true;
-          }
+        const meetsScheduledRoll: boolean = planForToday != null && planForToday.expIdx > openCall.expIdx;
+
+        const previousCall: ActiveCallPosition = openCall;
+        const originalHorizon = Math.max(1, previousCall.expIdx - previousCall.sellIdx + 1);
+        const currentCycleIdx = cycleIndexByEndIdx.get(previousCall.expIdx) ?? null;
+        const nextEligibleCycle: { index: number; start: number; end: number } | null =
+          meetsDeltaTrigger || meetsScheduledRoll ? findNextEligibleCycle(previousCall.expIdx) : null;
+        const hasLaterCycle = currentCycleIdx != null && currentCycleIdx + 1 < cycles.length;
+
+        let shouldRoll = meetsDeltaTrigger || meetsScheduledRoll;
+        if (meetsScheduledRoll && !nextEligibleCycle && !hasLaterCycle) {
+          shouldRoll = meetsDeltaTrigger;
         }
-        if (meetsDeltaTrigger || meetsScheduledRoll) {
+
+        if (shouldRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
@@ -231,44 +281,39 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             rollEvents.push({ ...rollRecord, rollReason: 'delta' });
           }
 
-          const originalHorizon = Math.max(1, openCall.expIdx - openCall.sellIdx + 1);
-          let newExpIdx: number = openCall.expIdx;
-          for (let b = 0; b < boundaries.length; b += 2) {
-            const cycleStart = boundaries[b];
-            const cycleEnd = boundaries[b + 1];
-            if (cycleStart > openCall.expIdx) {
-              newExpIdx = cycleEnd;
-              break;
-            }
+          let targetExpIdx: number | null = nextEligibleCycle ? nextEligibleCycle.end : null;
+          if (targetExpIdx == null && !hasLaterCycle) {
+            targetExpIdx = Math.min(prices.length - 1, Math.max(i + 1, i + originalHorizon));
           }
-          if (newExpIdx <= openCall.expIdx) {
-            newExpIdx = Math.min(prices.length - 1, Math.max(i + 1, i + originalHorizon));
+          if (targetExpIdx != null && targetExpIdx <= i) {
+            targetExpIdx = Math.min(prices.length - 1, Math.max(i + 1, i + originalHorizon));
           }
-          if (newExpIdx <= i) {
-            newExpIdx = Math.min(prices.length - 1, i + 1);
-          }
-          const newTerm = Math.max((newExpIdx - i) / 252, 1 / 252);
-          let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
-          if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
-          if (meetsDeltaTrigger) {
-            const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
-            if (newStrike <= openCall.strike) {
-              newStrike = openCall.strike + minIncrement;
-              if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
-            }
-          }
-          const newQty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
-          if (newQty > 0) {
-            const newPremium = bsCallPrice(S, newStrike, params.r, params.q, iv, newTerm);
-            openCall = { strike: newStrike, premium: newPremium, qty: newQty, sellIdx: i, expIdx: newExpIdx };
-            const premiumCash = newPremium * (newQty * 100);
-            cash += premiumCash;
-            if (params.reinvestPremium) {
-              const lotShares = Math.floor(premiumCash / S);
-              if (lotShares > 0) {
-                shares += lotShares;
-                cash -= lotShares * S;
+          if (targetExpIdx != null) {
+            const newTerm = Math.max((targetExpIdx - i) / 252, 1 / 252);
+            let newStrike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, newTerm);
+            if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
+            if (meetsDeltaTrigger) {
+              const minIncrement = params.roundStrikeToInt ? 1 : Math.max(0.5, newStrike * 0.01);
+              if (newStrike <= previousCall.strike) {
+                newStrike = previousCall.strike + minIncrement;
+                if (params.roundStrikeToInt) newStrike = Math.round(newStrike);
               }
+            }
+            const newQty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
+            if (newQty > 0) {
+              const newPremium = bsCallPrice(S, newStrike, params.r, params.q, iv, newTerm);
+              openCall = { strike: newStrike, premium: newPremium, qty: newQty, sellIdx: i, expIdx: targetExpIdx };
+              const premiumCash = newPremium * (newQty * 100);
+              cash += premiumCash;
+              if (params.reinvestPremium) {
+                const lotShares = Math.floor(premiumCash / S);
+                if (lotShares > 0) {
+                  shares += lotShares;
+                  cash -= lotShares * S;
+                }
+              }
+            } else {
+              openCall = null;
             }
           } else {
             openCall = null;
@@ -277,30 +322,24 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       }
     }
 
-    if (!openCall) {
-      for (let b = 0; b < boundaries.length; b += 2) {
-        if (boundaries[b] === i) {
-          const expIdx = boundaries[b + 1];
-          if (hasEarningsInCycle(boundaries[b], expIdx)) break;
-          const T = Math.max((expIdx - boundaries[b] + 1) / 252, 1 / 252);
-          const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
-          if (qty > 0) {
-            const S = prices[i];
-            let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
-            if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
-            const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
-            openCall = { strike, premium, qty, sellIdx: i, expIdx };
-            const premiumCash = premium * (qty * 100);
-            cash += premiumCash;
-            if (params.reinvestPremium) {
-              const lotShares = Math.floor(premiumCash / S);
-              if (lotShares > 0) {
-                shares += lotShares;
-                cash -= lotShares * S;
-              }
-            }
+    if (!openCall && planForToday && planForToday.expIdx > i) {
+      const horizon = Math.max(planForToday.expIdx - i, 1);
+      const T = Math.max(horizon / 252, 1 / 252);
+      const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
+      if (qty > 0) {
+        const S = prices[i];
+        let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
+        if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
+        const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
+        openCall = { strike, premium, qty, sellIdx: i, expIdx: planForToday.expIdx };
+        const premiumCash = premium * (qty * 100);
+        cash += premiumCash;
+        if (params.reinvestPremium) {
+          const lotShares = Math.floor(premiumCash / S);
+          if (lotShares > 0) {
+            shares += lotShares;
+            cash -= lotShares * S;
           }
-          break;
         }
       }
     }
@@ -344,6 +383,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
 
     const total = cash + shares * prices[i];
     cc_value.push(total);
+    ccSharesSeries.push(shares);
     if (openCall) {
       const remainingDays = Math.max(openCall.expIdx - i, 0);
       const remainingTerm = Math.max(remainingDays / 252, 1 / 252);
@@ -376,6 +416,8 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     UnderlyingPrice: prices[idx],
     CallStrike: callStrikeSeries[idx],
     CallDelta: callDeltaSeries[idx],
+    BuyAndHoldShares: params.shares,
+    CoveredCallShares: ccSharesSeries[idx],
     settlement: null as null | {
       pnl: number;
       strike: number;
