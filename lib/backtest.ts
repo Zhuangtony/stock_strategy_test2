@@ -46,6 +46,8 @@ export interface BacktestCurvePoint {
   UnderlyingPrice: number;
   CallStrike: number | null;
   CallDelta: number | null;
+  BuyAndHoldShares: number;
+  CoveredCallShares: number;
   settlement: null | {
     pnl: number;
     strike: number;
@@ -161,6 +163,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     expIdx: number;
   } = null;
   const cc_value: number[] = [];
+  const ccSharesSeries: number[] = [];
   const callStrikeSeries: (number | null)[] = [];
   const callDeltaSeries: (number | null)[] = [];
   const settlements: {
@@ -344,6 +347,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
 
     const total = cash + shares * prices[i];
     cc_value.push(total);
+    ccSharesSeries.push(shares);
     if (openCall) {
       const remainingDays = Math.max(openCall.expIdx - i, 0);
       const remainingTerm = Math.max(remainingDays / 252, 1 / 252);
@@ -376,6 +380,8 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     UnderlyingPrice: prices[idx],
     CallStrike: callStrikeSeries[idx],
     CallDelta: callDeltaSeries[idx],
+    BuyAndHoldShares: params.shares,
+    CoveredCallShares: ccSharesSeries[idx],
     settlement: null as null | {
       pnl: number;
       strike: number;
