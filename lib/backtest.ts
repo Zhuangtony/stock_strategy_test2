@@ -76,6 +76,14 @@ export interface RunBacktestResult {
   rollDeltaTrigger: number;
 }
 
+type ActiveCallPosition = {
+  strike: number;
+  premium: number;
+  qty: number;
+  sellIdx: number;
+  expIdx: number;
+};
+
 function getISOWeek(date: Date) {
   const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = tmp.getUTCDay() || 7;
@@ -192,13 +200,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   let cash = params.initialCapital;
   let shares = params.shares;
   const baseContractQty = Math.floor(params.shares / 100);
-  let openCall: null | {
-    strike: number;
-    premium: number;
-    qty: number;
-    sellIdx: number;
-    expIdx: number;
-  } = null;
+  let openCall: ActiveCallPosition | null = null;
   const cc_value: number[] = [];
   const ccSharesSeries: number[] = [];
   const callStrikeSeries: (number | null)[] = [];
@@ -234,7 +236,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     const S = prices[i];
 
     if (params.enableRoll && openCall) {
-      const daysToExpiry = openCall.expIdx - i;
+      const daysToExpiry: number = openCall.expIdx - i;
       if (daysToExpiry >= 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
@@ -247,7 +249,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
           }
         }
 
-        const previousCall = openCall;
+        const previousCall: ActiveCallPosition = openCall;
         const originalHorizon = Math.max(1, previousCall.expIdx - previousCall.sellIdx + 1);
         const currentCycleIdx = cycleIndexByEndIdx.get(previousCall.expIdx) ?? null;
         const nextEligibleCycle = meetsDeltaTrigger || meetsScheduledRoll ? findNextEligibleCycle(previousCall.expIdx) : null;
