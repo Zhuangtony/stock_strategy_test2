@@ -138,7 +138,6 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     typeof params.rollDaysBeforeExpiry === 'number' && Number.isFinite(params.rollDaysBeforeExpiry)
       ? Math.max(0, Math.min(4, Math.floor(params.rollDaysBeforeExpiry)))
       : 0;
-  const scheduledRollOffset = params.enableRoll ? rawRollOffset : null;
   const entryOffset = rawRollOffset;
   const boundaries = generateCycleBoundaries(dates, params.freq);
 
@@ -235,31 +234,29 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   for (let i = 0; i < prices.length; i++) {
     const S = prices[i];
 
+    const planForToday = salePlanByIndex.get(i) ?? null;
+
     if (params.enableRoll && openCall) {
       const daysToExpiry: number = openCall.expIdx - i;
       if (daysToExpiry >= 0) {
         const timeToExpiry = Math.max(daysToExpiry / 252, 1 / 252);
         const currentDelta = bsCallDelta(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
         const meetsDeltaTrigger = daysToExpiry > 2 && currentDelta >= rollDeltaTrigger;
-        let meetsScheduledRoll = false;
-        if (scheduledRollOffset !== null) {
-          const daysUntilExpiry = openCall.expIdx - i;
-          if (daysUntilExpiry <= scheduledRollOffset) {
-            meetsScheduledRoll = true;
-          }
-        }
+        const meetsScheduledRoll: boolean = planForToday != null && planForToday.expIdx > openCall.expIdx;
 
         const previousCall: ActiveCallPosition = openCall;
         const originalHorizon = Math.max(1, previousCall.expIdx - previousCall.sellIdx + 1);
         const currentCycleIdx = cycleIndexByEndIdx.get(previousCall.expIdx) ?? null;
-        const nextEligibleCycle = meetsDeltaTrigger || meetsScheduledRoll ? findNextEligibleCycle(previousCall.expIdx) : null;
+        const nextEligibleCycle: { index: number; start: number; end: number } | null =
+          meetsDeltaTrigger || meetsScheduledRoll ? findNextEligibleCycle(previousCall.expIdx) : null;
         const hasLaterCycle = currentCycleIdx != null && currentCycleIdx + 1 < cycles.length;
 
+        let shouldRoll = meetsDeltaTrigger || meetsScheduledRoll;
         if (meetsScheduledRoll && !nextEligibleCycle && !hasLaterCycle) {
-          meetsScheduledRoll = false;
+          shouldRoll = meetsDeltaTrigger;
         }
 
-        if (meetsDeltaTrigger || meetsScheduledRoll) {
+        if (shouldRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
@@ -325,26 +322,23 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       }
     }
 
-    if (!openCall) {
-      const plan = salePlanByIndex.get(i);
-      if (plan && plan.expIdx > i) {
-        const horizon = Math.max(plan.expIdx - i, 1);
-        const T = Math.max(horizon / 252, 1 / 252);
-        const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
-        if (qty > 0) {
-          const S = prices[i];
-          let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
-          if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
-          const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
-          openCall = { strike, premium, qty, sellIdx: i, expIdx: plan.expIdx };
-          const premiumCash = premium * (qty * 100);
-          cash += premiumCash;
-          if (params.reinvestPremium) {
-            const lotShares = Math.floor(premiumCash / S);
-            if (lotShares > 0) {
-              shares += lotShares;
-              cash -= lotShares * S;
-            }
+    if (!openCall && planForToday && planForToday.expIdx > i) {
+      const horizon = Math.max(planForToday.expIdx - i, 1);
+      const T = Math.max(horizon / 252, 1 / 252);
+      const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
+      if (qty > 0) {
+        const S = prices[i];
+        let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
+        if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
+        const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
+        openCall = { strike, premium, qty, sellIdx: i, expIdx: planForToday.expIdx };
+        const premiumCash = premium * (qty * 100);
+        cash += premiumCash;
+        if (params.reinvestPremium) {
+          const lotShares = Math.floor(premiumCash / S);
+          if (lotShares > 0) {
+            shares += lotShares;
+            cash -= lotShares * S;
           }
         }
       }
