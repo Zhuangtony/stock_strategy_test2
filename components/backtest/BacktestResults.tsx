@@ -122,6 +122,21 @@ type ChartDatum = BacktestCurvePoint & {
   [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
+type StrategyComparisonRow = {
+  id: string;
+  color: string;
+  label: string;
+  shares: string;
+  finalValue: string;
+  totalReturn: string;
+  annualized: string;
+  winRate: string;
+  relativeReturn: string;
+  rollDescription: string;
+  options: string;
+  isBenchmark?: boolean;
+};
+
 type BacktestResultsProps = {
   strategies: StrategyRunResult[];
   ticker: string;
@@ -157,6 +172,14 @@ export function BacktestResults({
     const pct = value * 100;
     const digits = Math.abs(pct) >= 100 ? 1 : 2;
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
+  }, []);
+  const formatShareCount = useCallback((value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    const decimals = Number.isInteger(value) ? 0 : 2;
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals,
+    });
   }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
@@ -229,6 +252,8 @@ export function BacktestResults({
     ],
     [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
   );
+
+  const buyAndHoldColor = BASE_SERIES_CONFIG[0]?.color ?? '#2563eb';
 
   const comparisonSeriesList = useMemo(
     () =>
@@ -979,40 +1004,71 @@ export function BacktestResults({
   const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
   const canDownloadCsv = useMemo(() => result.curve.length > 0, [result.curve.length]);
 
-  const strategyComparisonRows = useMemo(
-    () =>
-      strategies.map((entry, index) => {
-        const years = Math.max(1 / 12, entry.result.curve.length / 252);
-        const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
-        const rollDescription = entry.config.enableRoll
-          ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
-              entry.config.rollDaysBeforeExpiry === 0
-                ? '到期日換倉'
-                : `提前 ${entry.config.rollDaysBeforeExpiry} 日`
-            }`
-          : '未啟用';
-        const optionFlags: string[] = [];
-        if (entry.config.reinvestPremium) optionFlags.push('權利金再投資');
-        if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
-        if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
-        if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
-        const options = optionFlags.length ? optionFlags.join(' / ') : '—';
-        const finalValue = entry.result.curve.at(-1)?.CoveredCall;
-        return {
-          id: entry.id,
-          color: getStrategyColor(index),
-          label: formatStrategyLabel(entry.config),
-          finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
-          totalReturn: formatSignedPercent(entry.result.ccReturn),
-          annualized: formatSignedPercent(annualized),
-          winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
-          relativeReturn: formatSignedPercent(entry.result.ccReturn - entry.result.bhReturn),
-          rollDescription,
-          options,
-        };
-      }),
-    [formatSignedPercent, formatStrategyLabel, getStrategyColor, strategies],
-  );
+  const strategyComparisonRows = useMemo<StrategyComparisonRow[]>(() => {
+    if (!strategies.length) return [];
+
+    const strategyRows = strategies.map((entry, index) => {
+      const years = Math.max(1 / 12, entry.result.curve.length / 252);
+      const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
+      const rollDescription = entry.config.enableRoll
+        ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
+            entry.config.rollDaysBeforeExpiry === 0
+              ? '到期日換倉'
+              : `提前 ${entry.config.rollDaysBeforeExpiry} 日`
+          }`
+        : '未啟用';
+      const optionFlags: string[] = [];
+      if (entry.config.reinvestPremium) optionFlags.push('權利金再投資');
+      if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
+      if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
+      if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
+      const options = optionFlags.length ? optionFlags.join(' / ') : '—';
+      const finalValue = entry.result.curve.at(-1)?.CoveredCall;
+      return {
+        id: entry.id,
+        color: getStrategyColor(index),
+        label: formatStrategyLabel(entry.config),
+        shares: formatShareCount(entry.result.ccShares),
+        finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
+        totalReturn: formatSignedPercent(entry.result.ccReturn),
+        annualized: formatSignedPercent(annualized),
+        winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
+        relativeReturn: formatSignedPercent(entry.result.ccReturn - entry.result.bhReturn),
+        rollDescription,
+        options,
+      };
+    });
+
+    const baseResult = strategies[0]?.result;
+    const years = baseResult ? Math.max(1 / 12, baseResult.curve.length / 252) : null;
+    const annualized = years != null && baseResult ? (1 + baseResult.bhReturn) ** (1 / years) - 1 : null;
+    const buyHoldFinal = baseResult?.curve.at(-1)?.BuyAndHold ?? null;
+    const buyHoldShares = baseResult?.bhShares ?? null;
+    const buyHoldReturn = baseResult?.bhReturn ?? null;
+    const buyHoldRow = {
+      id: 'buy-and-hold',
+      color: buyAndHoldColor,
+      label: 'Buy & Hold',
+      shares: formatShareCount(buyHoldShares),
+      finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '—',
+      totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '—',
+      annualized: annualized != null ? formatSignedPercent(annualized) : '—',
+      winRate: '—',
+      relativeReturn: '—',
+      rollDescription: '—',
+      options: '—',
+      isBenchmark: true,
+    };
+
+    return [buyHoldRow, ...strategyRows];
+  }, [
+    buyAndHoldColor,
+    formatShareCount,
+    formatSignedPercent,
+    formatStrategyLabel,
+    getStrategyColor,
+    strategies,
+  ]);
 
   return (
     <React.Fragment>
@@ -1214,6 +1270,7 @@ export function BacktestResults({
             <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">策略</th>
+                <th className="px-4 py-3 text-right font-semibold">持股數</th>
                 <th className="px-4 py-3 text-right font-semibold">最終資產</th>
                 <th className="px-4 py-3 text-right font-semibold">總報酬</th>
                 <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
@@ -1225,13 +1282,19 @@ export function BacktestResults({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {strategyComparisonRows.map(row => (
-                <tr key={row.id} className="bg-white/70 hover:bg-indigo-50/40">
+                <tr
+                  key={row.id}
+                  className={`${
+                    row.isBenchmark ? 'bg-indigo-50/60' : 'bg-white/70 hover:bg-indigo-50/40'
+                  } transition-colors`}
+                >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
                       <span className="font-medium text-slate-700">{row.label}</span>
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.shares}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
                   <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
