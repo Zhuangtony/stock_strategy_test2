@@ -81,6 +81,7 @@ type SeriesConfig = {
   strokeDasharray?: string;
   settlementKey?: string;
   sharesKey?: string;
+  strategyId?: string;
 };
 
 type SeriesKey = SeriesConfig['key'];
@@ -88,6 +89,22 @@ type SeriesKey = SeriesConfig['key'];
 type ChartDatum = BacktestCurvePoint & {
   [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
+
+type StrategySeriesKeys = {
+  value: string;
+  shares: string;
+  strike: string;
+  delta: string;
+  settlement: string;
+};
+
+const buildStrategySeriesKeys = (strategyId: string): StrategySeriesKeys => ({
+  value: `CoveredCall_${strategyId}`,
+  shares: `CoveredCallShares_${strategyId}`,
+  strike: `CallStrike_${strategyId}`,
+  delta: `CallDelta_${strategyId}`,
+  settlement: `settlement_${strategyId}`,
+});
 
 type EarningsWeekRange = {
   startIdx: number;
@@ -134,6 +151,14 @@ export function BacktestResults({
   const result = primaryStrategy.result;
   const primaryParams = primaryStrategy.params;
   const comparisonStrategies = strategies.slice(1);
+  const strategySeriesKeys = useMemo(() => {
+    const map = new Map<string, StrategySeriesKeys>();
+    strategies.forEach(entry => {
+      map.set(entry.id, buildStrategySeriesKeys(entry.id));
+    });
+    return map;
+  }, [strategies]);
+  const primarySeriesKeys = strategySeriesKeys.get(primaryStrategy.id) ?? buildStrategySeriesKeys(primaryStrategy.id);
   const getStrategyColor = useCallback(
     (index: number) => (index === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(index - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length]),
     [],
@@ -231,10 +256,11 @@ export function BacktestResults({
         key: 'coveredCall',
         label: formatStrategyLabel(primaryStrategy.config),
         color: getStrategyColor(0),
-        dataKey: 'CoveredCall',
+        dataKey: primarySeriesKeys.value,
         axis: 'value',
-        settlementKey: 'settlement',
-        sharesKey: 'CoveredCallShares',
+        settlementKey: primarySeriesKeys.settlement,
+        sharesKey: primarySeriesKeys.shares,
+        strategyId: primaryStrategy.id,
       },
       {
         key: 'priceSpread',
@@ -244,7 +270,15 @@ export function BacktestResults({
         axis: 'price',
       },
     ],
-    [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
+    [
+      formatStrategyLabel,
+      getStrategyColor,
+      primarySeriesKeys.shares,
+      primarySeriesKeys.settlement,
+      primarySeriesKeys.value,
+      primaryStrategy.config,
+      primaryStrategy.id,
+    ],
   );
 
   const buyAndHoldColor = BASE_SERIES_CONFIG[0]?.color ?? '#2563eb';
@@ -253,53 +287,76 @@ export function BacktestResults({
   const comparisonSeriesList = useMemo(
     () =>
       comparisonStrategies.map((entry, index) => {
-        const dataKey = `CoveredCall_${entry.id}`;
-        const settlementKey = `settlement_${entry.id}`;
-        const sharesKey = `CoveredCallShares_${entry.id}`;
+        const keys = strategySeriesKeys.get(entry.id) ?? buildStrategySeriesKeys(entry.id);
         const config: SeriesConfig = {
           key: `strategy-${entry.id}`,
           label: formatStrategyLabel(entry.config),
           color: getStrategyColor(index + 1),
-          dataKey,
+          dataKey: keys.value,
           axis: 'value',
           strokeDasharray: '5 3',
-          settlementKey,
-          sharesKey,
+          settlementKey: keys.settlement,
+          sharesKey: keys.shares,
+          strategyId: entry.id,
         };
         return { config, curve: entry.result.curve };
       }),
-    [comparisonStrategies, formatStrategyLabel, getStrategyColor],
+    [comparisonStrategies, formatStrategyLabel, getStrategyColor, strategySeriesKeys],
   );
 
   const chartData = useMemo(() => {
+    if (!Array.isArray(result.curve) || result.curve.length === 0) return [] as ChartDatum[];
     const base = result.curve.map(point => {
-      const copy = { ...point } as ChartDatum;
-      const rawUnderlying = copy.UnderlyingPrice;
-      const rawStrike = copy.CallStrike;
-      const underlying = typeof rawUnderlying === 'number' ? rawUnderlying : null;
-      const strike = typeof rawStrike === 'number' ? rawStrike : null;
-      copy.PriceSpread = underlying != null && strike != null ? underlying - strike : null;
-      return copy;
-    }) as ChartDatum[];
-    if (!comparisonSeriesList.length) return base;
-    comparisonSeriesList.forEach(series => {
-      const { curve, config } = series;
-      if (!Array.isArray(curve) || !curve.length) return;
-      for (let i = 0; i < base.length; i++) {
-        const value = curve[i]?.CoveredCall;
-        base[i][config.dataKey] = value ?? null;
-        if (config.settlementKey) {
-          const settlementValue = curve[i]?.settlement ?? null;
-          base[i][config.settlementKey] = settlementValue;
-        }
-        if (config.sharesKey) {
-          const sharesValue = curve[i]?.CoveredCallShares;
-          base[i][config.sharesKey] = typeof sharesValue === 'number' ? sharesValue : null;
-        }
-      }
+      const row: ChartDatum = {
+        date: point.date,
+        BuyAndHold: point.BuyAndHold,
+        BuyAndHoldShares: point.BuyAndHoldShares,
+        UnderlyingPrice: point.UnderlyingPrice,
+      } as ChartDatum;
+      return row;
     });
+
+    const baseDates = result.curve.map(point => point.date);
+
+    strategies.forEach(entry => {
+      const keys = strategySeriesKeys.get(entry.id) ?? buildStrategySeriesKeys(entry.id);
+      const pointMap = new Map<string, BacktestCurvePoint>();
+      entry.result.curve.forEach(point => {
+        pointMap.set(point.date, point);
+      });
+      baseDates.forEach((date, idx) => {
+        const target = base[idx];
+        if (!target) return;
+        const source = pointMap.get(date);
+        if (!source) {
+          target[keys.value] = null;
+          target[keys.shares] = null;
+          target[keys.strike] = null;
+          target[keys.delta] = null;
+          target[keys.settlement] = null;
+          return;
+        }
+        const value = source.CoveredCall;
+        target[keys.value] = typeof value === 'number' ? value : value ?? null;
+        const sharesValue = source.CoveredCallShares;
+        target[keys.shares] = typeof sharesValue === 'number' ? sharesValue : sharesValue ?? null;
+        const strikeValue = source.CallStrike;
+        target[keys.strike] = typeof strikeValue === 'number' ? strikeValue : strikeValue ?? null;
+        const deltaValue = source.CallDelta;
+        target[keys.delta] = typeof deltaValue === 'number' ? deltaValue : deltaValue ?? null;
+        target[keys.settlement] = source.settlement ?? null;
+      });
+    });
+
+    base.forEach(row => {
+      const strikeRaw = row[primarySeriesKeys.strike];
+      const strike = typeof strikeRaw === 'number' ? strikeRaw : strikeRaw ?? null;
+      const underlying = typeof row.UnderlyingPrice === 'number' ? row.UnderlyingPrice : row.UnderlyingPrice ?? null;
+      row.PriceSpread = strike != null && underlying != null ? (underlying as number) - (strike as number) : null;
+    });
+
     return base;
-  }, [comparisonSeriesList, result.curve]);
+  }, [primarySeriesKeys.strike, result.curve, strategies, strategySeriesKeys]);
 
   const baseDates = useMemo(() => result.curve.map(point => point.date), [result.curve]);
 
@@ -781,59 +838,76 @@ export function BacktestResults({
       return str;
     };
 
-    const baseRows = result.curve;
-    const comparisonColumns = comparisonStrategies.map(entry => {
-      const label = `${formatStrategyLabel(entry.config)} Value`;
-      const map = new Map<string, number | null>();
+    const strategyPointMaps = strategies.map(entry => {
+      const map = new Map<string, BacktestCurvePoint>();
       entry.result.curve.forEach(point => {
-        const value = typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null;
-        map.set(point.date, value);
+        map.set(point.date, point);
       });
-      return { label, map };
+      return { map };
     });
 
     const headers = [
       'Date',
-      'Buy & Hold Value',
-      `${formatStrategyLabel(primaryStrategy.config)} Value`,
       'Underlying Price',
-      'Call Strike',
-      'Call Delta',
-      'Settlement Type',
-      'Settlement PnL',
-      'Settlement Strike',
-      'Settlement Underlying',
-      'Settlement Premium',
-      'Settlement Qty',
-      ...comparisonColumns.map(col => col.label),
+      'Buy & Hold Value',
+      'Buy & Hold Shares',
+      ...strategies.flatMap(entry => {
+        const label = formatStrategyLabel(entry.config);
+        return [
+          `${label} Value`,
+          `${label} Shares`,
+          `${label} Call Strike`,
+          `${label} Call Delta`,
+          `${label} Settlement Type`,
+          `${label} Settlement PnL`,
+          `${label} Settlement Strike`,
+          `${label} Settlement Underlying`,
+          `${label} Settlement Premium`,
+          `${label} Settlement Qty`,
+          `${label} Roll Reason`,
+        ];
+      }),
     ];
 
     const rows = [headers.map(serialize).join(',')];
 
-    for (const point of baseRows as any[]) {
-      const settlement = point.settlement ?? null;
+    result.curve.forEach(basePoint => {
+      const date = basePoint.date;
+      const underlyingValue = basePoint.UnderlyingPrice;
+      const buyAndHoldValue = basePoint.BuyAndHold;
+      const buyAndHoldSharesValue = basePoint.BuyAndHoldShares;
+
       const rowValues: (string | number | null | undefined)[] = [
-        point.date,
-        typeof point.BuyAndHold === 'number' ? point.BuyAndHold : point.BuyAndHold ?? null,
-        typeof point.CoveredCall === 'number' ? point.CoveredCall : point.CoveredCall ?? null,
-        typeof point.UnderlyingPrice === 'number' ? point.UnderlyingPrice : point.UnderlyingPrice ?? null,
-        typeof point.CallStrike === 'number' ? point.CallStrike : point.CallStrike ?? null,
-        typeof point.CallDelta === 'number' ? point.CallDelta : point.CallDelta ?? null,
-        settlement?.type ?? null,
-        typeof settlement?.pnl === 'number' ? settlement.pnl : settlement?.pnl ?? null,
-        typeof settlement?.strike === 'number' ? settlement.strike : settlement?.strike ?? null,
-        typeof settlement?.underlying === 'number' ? settlement.underlying : settlement?.underlying ?? null,
-        typeof settlement?.premium === 'number' ? settlement.premium : settlement?.premium ?? null,
-        typeof settlement?.qty === 'number' ? settlement.qty : settlement?.qty ?? null,
+        date,
+        typeof underlyingValue === 'number' ? underlyingValue : underlyingValue ?? null,
+        typeof buyAndHoldValue === 'number' ? buyAndHoldValue : buyAndHoldValue ?? null,
+        typeof buyAndHoldSharesValue === 'number' ? buyAndHoldSharesValue : buyAndHoldSharesValue ?? null,
       ];
 
-      comparisonColumns.forEach(col => {
-        const value = col.map.get(point.date);
-        rowValues.push(typeof value === 'number' ? value : value ?? null);
+      strategyPointMaps.forEach(({ map }) => {
+        const point = map.get(date) ?? null;
+        const value = point?.CoveredCall;
+        const sharesValue = point?.CoveredCallShares;
+        const strikeValue = point?.CallStrike;
+        const deltaValue = point?.CallDelta;
+        const settlement = point?.settlement ?? null;
+        rowValues.push(
+          typeof value === 'number' ? value : value ?? null,
+          typeof sharesValue === 'number' ? sharesValue : sharesValue ?? null,
+          typeof strikeValue === 'number' ? strikeValue : strikeValue ?? null,
+          typeof deltaValue === 'number' ? deltaValue : deltaValue ?? null,
+          settlement?.type ?? null,
+          typeof settlement?.pnl === 'number' ? settlement.pnl : settlement?.pnl ?? null,
+          typeof settlement?.strike === 'number' ? settlement.strike : settlement?.strike ?? null,
+          typeof settlement?.underlying === 'number' ? settlement.underlying : settlement?.underlying ?? null,
+          typeof settlement?.premium === 'number' ? settlement.premium : settlement?.premium ?? null,
+          typeof settlement?.qty === 'number' ? settlement.qty : settlement?.qty ?? null,
+          settlement?.type === 'roll' ? settlement.rollReason ?? null : null,
+        );
       });
 
       rows.push(rowValues.map(serialize).join(','));
-    }
+    });
 
     const csv = rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -846,7 +920,7 @@ export function BacktestResults({
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [comparisonStrategies, end, formatStrategyLabel, primaryStrategy.config, result.curve, start, ticker]);
+  }, [end, formatStrategyLabel, result.curve, start, strategies, ticker]);
 
   useEffect(() => {
     if (!scrollerMetrics.hasWindow) {
@@ -965,7 +1039,8 @@ export function BacktestResults({
     ({ active, payload, label }: TooltipProps<number, string>) => {
       if (!active || !payload || !payload.length) return null;
       const point = payload[0].payload as any;
-      const callDelta = point.CallDelta;
+      const callDeltaRaw = primarySeriesKeys ? point[primarySeriesKeys.delta] : null;
+      const callDelta = typeof callDeltaRaw === 'number' ? callDeltaRaw : null;
       const isEarningsWeek = typeof point.date === 'string' && earningsWeekDateSet.has(point.date);
       const rollMarks = rollPoints.filter(event => event.date === point.date);
       const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
@@ -990,8 +1065,10 @@ export function BacktestResults({
             shares: sharesValue,
           };
         });
-      const primaryEntry = strategyValues.find(entry => entry.dataKey === 'CoveredCall');
+      const primaryEntry = strategyValues.find(entry => entry.dataKey === primarySeriesKeys.value);
       const settlement = primaryEntry?.settlement ?? null;
+      const callStrikeRaw = primarySeriesKeys ? point[primarySeriesKeys.strike] : null;
+      const callStrike = typeof callStrikeRaw === 'number' ? callStrikeRaw : null;
       return (
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
           <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
@@ -1049,7 +1126,7 @@ export function BacktestResults({
             {typeof point.UnderlyingPrice === 'number' && (
               <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
             )}
-            {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
+            {typeof callStrike === 'number' && <div>履約價：{callStrike.toFixed(2)}</div>}
             {typeof point.PriceSpread === 'number' && (
               <div>價差（股價-履約價）：{formatCurrency(point.PriceSpread, 2)}</div>
             )}
@@ -1093,7 +1170,17 @@ export function BacktestResults({
         </div>
       );
     },
-    [earningsWeekDateSet, formatDateWithWeekday, formatShareCount, rollPoints, settlementKeyByDataKey, sharesKeyByDataKey],
+    [
+      earningsWeekDateSet,
+      formatDateWithWeekday,
+      formatShareCount,
+      primarySeriesKeys.delta,
+      primarySeriesKeys.strike,
+      primarySeriesKeys.value,
+      rollPoints,
+      settlementKeyByDataKey,
+      sharesKeyByDataKey,
+    ],
   );
 
   const renderedData = useMemo(() => {
@@ -1362,7 +1449,7 @@ export function BacktestResults({
                 {isCoveredCallVisible && (
                   <Area
                     type="monotone"
-                    dataKey="CoveredCall"
+                    dataKey={primarySeriesKeys.value}
                     yAxisId="value"
                     stroke="none"
                     fill={`url(#${coveredCallAreaId})`}
