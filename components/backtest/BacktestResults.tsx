@@ -26,6 +26,9 @@ import { generateCycleBoundaries, type BacktestCurvePoint } from '../../lib/back
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { StrategyConfigInput, StrategyRunResult } from './types';
 
+const VALUE_AXIS_WIDTH = 80;
+const PRICE_AXIS_WIDTH = 72;
+
 const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
 const formatDateWithWeekday = (value: string) => {
   if (!value) return value;
@@ -363,6 +366,11 @@ export function BacktestResults({
     return [...base, ...dynamic];
   }, [BASE_SERIES_CONFIG, comparisonSeriesList]);
 
+  const valueSeriesKeys = useMemo(
+    () => seriesConfig.filter(series => series.axis === 'value').map(series => series.dataKey),
+    [seriesConfig],
+  );
+
   const settlementDotRenderers = useMemo(() => {
     const map: Record<string, NonNullable<LineProps['dot']>> = {};
     seriesConfig.forEach(series => {
@@ -382,6 +390,16 @@ export function BacktestResults({
     });
     return map;
   }, [seriesConfig]);
+
+  const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
+  const { top: chartMarginTop, left: chartMarginLeft } = chartMargin;
+  const legendStyle = useMemo<React.CSSProperties>(
+    () => ({
+      top: chartMarginTop + 8,
+      left: chartMarginLeft + VALUE_AXIS_WIDTH + 8,
+    }),
+    [chartMarginLeft, chartMarginTop],
+  );
 
   const settlementKeys = useMemo(
     () =>
@@ -1072,7 +1090,29 @@ export function BacktestResults({
     return visibleData.filter((_, idx) => idx % step === 0 || idx === visibleData.length - 1 || required.has(idx));
   }, [pointDensity, settlementKeys, visibleData]);
 
-  const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
+  const valueAxisExtent = useMemo(() => {
+    if (!renderedData.length || !valueSeriesKeys.length) return null;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    renderedData.forEach(point => {
+      const payload = point as Record<string, unknown>;
+      valueSeriesKeys.forEach(key => {
+        const raw = payload[key];
+        if (typeof raw === 'number') {
+          if (raw < min) min = raw;
+          if (raw > max) max = raw;
+        }
+      });
+    });
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    if (min === max) {
+      const padding = Math.max(1, Math.abs(min) * 0.01);
+      min -= padding;
+      max += padding;
+    }
+    return { min, max } as const;
+  }, [renderedData, valueSeriesKeys]);
+
   const canDownloadCsv = useMemo(() => result.curve.length > 0, [result.curve.length]);
 
   const strategyComparisonRows = useMemo<StrategyComparisonRow[]>(() => {
@@ -1251,7 +1291,7 @@ export function BacktestResults({
                   yAxisId="value"
                   tick={{ fontSize: 12, fontWeight: 600 }}
                   tickFormatter={formatValueTick}
-                  width={80}
+                  width={VALUE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
                 />
                 <YAxis
@@ -1259,7 +1299,7 @@ export function BacktestResults({
                   orientation="right"
                   tick={{ fontSize: 12, fontWeight: 600 }}
                   tickFormatter={formatPriceTick}
-                  width={72}
+                  width={PRICE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
                 />
                 <Tooltip content={<CustomTooltip />} />
@@ -1273,9 +1313,10 @@ export function BacktestResults({
                     strokeOpacity={0}
                     fill="#facc15"
                     fillOpacity={0.18}
+                    {...(valueAxisExtent ? { y1: valueAxisExtent.min, y2: valueAxisExtent.max } : {})}
                     label={{
                       value: '財報週',
-                      position: 'insideTop',
+                      position: 'insideTopLeft',
                       fill: '#854d0e',
                       fontSize: 11,
                       fontWeight: 600,
@@ -1316,7 +1357,10 @@ export function BacktestResults({
                 ))}
               </LineChart>
             </ResponsiveContainer>
-            <div className="pointer-events-none absolute left-4 top-4 z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs">
+            <div
+              className="pointer-events-none absolute z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs"
+              style={legendStyle}
+            >
               {seriesConfig.map(series => {
                 const active = seriesVisibility[series.key] ?? true;
                 const dashed = Boolean(series.strokeDasharray);
