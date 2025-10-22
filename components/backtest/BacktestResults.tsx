@@ -11,6 +11,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -21,7 +22,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
-import type { BacktestCurvePoint } from '../../lib/backtest';
+import { generateCycleBoundaries, type BacktestCurvePoint } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { StrategyConfigInput, StrategyRunResult } from './types';
 
@@ -122,6 +123,15 @@ type ChartDatum = BacktestCurvePoint & {
   [key: string]: BacktestCurvePoint[keyof BacktestCurvePoint] | number | null;
 };
 
+type EarningsWeekRange = {
+  startIdx: number;
+  endIdx: number;
+  startDate: string;
+  endDate: string;
+};
+
+const EMPTY_EARNINGS_SET: ReadonlySet<string> = new Set<string>();
+
 type StrategyComparisonRow = {
   id: string;
   color: string;
@@ -155,6 +165,7 @@ export function BacktestResults({
   if (!strategies.length) return null;
   const primaryStrategy = strategies[0];
   const result = primaryStrategy.result;
+  const primaryParams = primaryStrategy.params;
   const comparisonStrategies = strategies.slice(1);
   const getStrategyColor = useCallback(
     (index: number) => (index === 0 ? '#f97316' : COMPARISON_SERIES_COLORS[(index - 1 + COMPARISON_SERIES_COLORS.length) % COMPARISON_SERIES_COLORS.length]),
@@ -291,6 +302,60 @@ export function BacktestResults({
     });
     return base;
   }, [comparisonSeriesList, result.curve]);
+
+  const baseDates = useMemo(() => result.curve.map(point => point.date), [result.curve]);
+
+  const earningsWeekRanges = useMemo(() => {
+    if (!baseDates.length) return [] as EarningsWeekRange[];
+    const earningsDates = Array.isArray(primaryParams.earningsDates)
+      ? primaryParams.earningsDates
+      : [];
+    if (!earningsDates.length) return [] as EarningsWeekRange[];
+    const freq = primaryParams.freq;
+    const boundaries = generateCycleBoundaries(baseDates, freq);
+    if (!boundaries.length) return [] as EarningsWeekRange[];
+    const dateToIndex = new Map<string, number>();
+    baseDates.forEach((date, idx) => dateToIndex.set(date, idx));
+    const seen = new Set<string>();
+    const ranges: EarningsWeekRange[] = [];
+    earningsDates.forEach(d => {
+      const idx = dateToIndex.get(d);
+      if (idx == null) return;
+      for (let b = 0; b < boundaries.length; b += 2) {
+        const startIdx = boundaries[b];
+        const endIdx = boundaries[b + 1];
+        if (idx >= startIdx && idx <= endIdx) {
+          const key = `${startIdx}-${endIdx}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            ranges.push({
+              startIdx,
+              endIdx,
+              startDate: baseDates[startIdx],
+              endDate: baseDates[endIdx],
+            });
+          }
+          break;
+        }
+      }
+    });
+    ranges.sort((a, b) => a.startIdx - b.startIdx);
+    return ranges;
+  }, [baseDates, primaryParams.earningsDates, primaryParams.freq]);
+
+  const earningsWeekDateSet = useMemo<ReadonlySet<string>>(() => {
+    if (!earningsWeekRanges.length) return EMPTY_EARNINGS_SET;
+    const set = new Set<string>();
+    earningsWeekRanges.forEach(range => {
+      const start = Math.max(0, Math.min(range.startIdx, range.endIdx));
+      const end = Math.min(baseDates.length - 1, Math.max(range.startIdx, range.endIdx));
+      for (let i = start; i <= end; i++) {
+        const date = baseDates[i];
+        if (date) set.add(date);
+      }
+    });
+    return set;
+  }, [baseDates, earningsWeekRanges]);
 
   const seriesConfig = useMemo(() => {
     const base = BASE_SERIES_CONFIG.map(series => ({ ...series }));
@@ -879,6 +944,7 @@ export function BacktestResults({
       if (!active || !payload || !payload.length) return null;
       const point = payload[0].payload as any;
       const callDelta = point.CallDelta;
+      const isEarningsWeek = typeof point.date === 'string' && earningsWeekDateSet.has(point.date);
       const rollMarks = rollPoints.filter(event => event.date === point.date);
       const deltaRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'delta');
       const scheduledRollMarks = rollMarks.filter(event => (event.rollReason ?? 'delta') === 'scheduled');
@@ -904,6 +970,11 @@ export function BacktestResults({
         <div className="min-w-[220px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs text-slate-600 shadow-xl">
           <div className="text-sm font-semibold text-slate-900">{formattedLabel}</div>
           <div className="mt-2 space-y-1">
+            {isEarningsWeek && (
+              <div className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-[2px] text-[10px] font-semibold text-amber-700">
+                財報週
+              </div>
+            )}
             <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
             {strategyValues.map(entry => (
               <div key={entry.key} className="flex items-center justify-between gap-2">
@@ -975,7 +1046,7 @@ export function BacktestResults({
         </div>
       );
     },
-    [formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
+    [earningsWeekDateSet, formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
   );
 
   const renderedData = useMemo(() => {
@@ -1192,6 +1263,26 @@ export function BacktestResults({
                   domain={['auto', 'auto']}
                 />
                 <Tooltip content={<CustomTooltip />} />
+                {earningsWeekRanges.map(range => (
+                  <ReferenceArea
+                    key={`earnings-${range.startIdx}-${range.endIdx}`}
+                    x1={range.startDate}
+                    x2={range.endDate}
+                    yAxisId="value"
+                    ifOverflow="extendDomain"
+                    strokeOpacity={0}
+                    fill="#facc15"
+                    fillOpacity={0.18}
+                    label={{
+                      value: '財報週',
+                      position: 'insideTop',
+                      fill: '#854d0e',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      offset: 12,
+                    }}
+                  />
+                ))}
                 {seriesConfig.map(series => {
                   const dotRenderer = showSettlementDots ? settlementDotRenderers[series.key] : undefined;
                   return (
