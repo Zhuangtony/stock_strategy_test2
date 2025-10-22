@@ -246,6 +246,17 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             meetsScheduledRoll = true;
           }
         }
+
+        const previousCall = openCall;
+        const originalHorizon = Math.max(1, previousCall.expIdx - previousCall.sellIdx + 1);
+        const currentCycleIdx = cycleIndexByEndIdx.get(previousCall.expIdx) ?? null;
+        const nextEligibleCycle = meetsDeltaTrigger || meetsScheduledRoll ? findNextEligibleCycle(previousCall.expIdx) : null;
+        const hasLaterCycle = currentCycleIdx != null && currentCycleIdx + 1 < cycles.length;
+
+        if (meetsScheduledRoll && !nextEligibleCycle && !hasLaterCycle) {
+          meetsScheduledRoll = false;
+        }
+
         if (meetsDeltaTrigger || meetsScheduledRoll) {
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
@@ -271,11 +282,6 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
             rollEvents.push({ ...rollRecord, rollReason: 'delta' });
           }
 
-          const previousCall = openCall;
-          const originalHorizon = Math.max(1, previousCall.expIdx - previousCall.sellIdx + 1);
-          const currentCycleIdx = cycleIndexByEndIdx.get(previousCall.expIdx) ?? null;
-          const nextEligibleCycle = findNextEligibleCycle(previousCall.expIdx);
-          const hasLaterCycle = currentCycleIdx != null && currentCycleIdx + 1 < cycles.length;
           let targetExpIdx: number | null = nextEligibleCycle ? nextEligibleCycle.end : null;
           if (targetExpIdx == null && !hasLaterCycle) {
             targetExpIdx = Math.min(prices.length - 1, Math.max(i + 1, i + originalHorizon));
