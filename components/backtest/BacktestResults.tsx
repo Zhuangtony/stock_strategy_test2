@@ -3,16 +3,18 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import {
+  Area,
   CartesianGrid,
   Line,
   LineChart,
   ReferenceArea,
-  ReferenceLine,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -28,6 +30,11 @@ import type { StrategyConfigInput, StrategyRunResult } from './types';
 
 const VALUE_AXIS_WIDTH = 80;
 const PRICE_AXIS_WIDTH = 72;
+const VALUE_AXIS_TICK_COLOR = '#1f2937';
+const PRICE_AXIS_TICK_COLOR = '#475569';
+const VALUE_AXIS_LINE_COLOR = '#cbd5f5';
+const PRICE_AXIS_LINE_COLOR = '#bfdbfe';
+const GRID_STROKE_COLOR = '#e2e8f0';
 
 const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
 const formatDateWithWeekday = (value: string) => {
@@ -55,51 +62,6 @@ const createSettlementDotRenderer = (settlementKey: string): NonNullable<LinePro
   return (
     <g>
       <circle cx={cx} cy={cy} r={3.8} fill={color} stroke="white" strokeWidth={1.2} />
-    </g>
-  );
-};
-
-const RollMarkerLabel = ({
-  viewBox,
-  x,
-}: {
-  viewBox?: { x?: number; y?: number; width?: number; height?: number };
-  x?: number;
-}) => {
-  if (!viewBox && typeof x !== 'number') return null;
-  const baseX = typeof x === 'number' ? x : viewBox?.x ?? 0;
-  const chartTop = viewBox?.y ?? 0;
-  const chartLeft = viewBox && viewBox.width && viewBox.width > 0 ? viewBox?.x ?? 0 : 0;
-  const chartRight = viewBox && viewBox.width && viewBox.width > 0 ? chartLeft + viewBox.width : null;
-  const labelWidth = 92;
-  const labelHeight = 22;
-  const offsetY = 10;
-
-  let rectX = baseX - labelWidth / 2;
-  if (chartRight != null) {
-    rectX = Math.min(rectX, chartRight - labelWidth - 4);
-  }
-  rectX = Math.max(chartLeft + 4, rectX);
-  const rectY = chartTop + offsetY;
-  const textX = rectX + labelWidth / 2;
-  const textY = rectY + labelHeight / 2 + 4;
-
-  return (
-    <g>
-      <rect
-        x={rectX}
-        y={rectY}
-        width={labelWidth}
-        height={labelHeight}
-        rx={labelHeight / 2}
-        fill="#ede9fe"
-        stroke="#5b21b6"
-        strokeWidth={1}
-        opacity={0.95}
-      />
-      <text x={textX} y={textY} textAnchor="middle" fill="#4c1d95" fontSize={10} fontWeight={600}>
-        Delta Roll-up
-      </text>
     </g>
   );
 };
@@ -229,6 +191,7 @@ export function BacktestResults({
     element: null,
   });
   const [isScrollerDragging, setIsScrollerDragging] = useState(false);
+  const coveredCallAreaId = useId();
 
   const handleEnterFullscreen = useCallback(() => {
     const container = chartContainerRef.current;
@@ -285,6 +248,7 @@ export function BacktestResults({
   );
 
   const buyAndHoldColor = BASE_SERIES_CONFIG[0]?.color ?? '#2563eb';
+  const coveredCallColor = getStrategyColor(0);
 
   const comparisonSeriesList = useMemo(
     () =>
@@ -432,12 +396,12 @@ export function BacktestResults({
     return map;
   }, [seriesConfig]);
 
-  const chartMargin = useMemo(() => ({ top: 20, right: 24, bottom: 30, left: 16 }), []);
+  const chartMargin = useMemo(() => ({ top: 32, right: 32, bottom: 44, left: 20 }), []);
   const { top: chartMarginTop, left: chartMarginLeft } = chartMargin;
   const legendStyle = useMemo<React.CSSProperties>(
     () => ({
-      top: chartMarginTop + 8,
-      left: chartMarginLeft + VALUE_AXIS_WIDTH + 8,
+      top: Math.max(12, chartMarginTop - 12),
+      left: chartMarginLeft + VALUE_AXIS_WIDTH + 12,
     }),
     [chartMarginLeft, chartMarginTop],
   );
@@ -1254,6 +1218,8 @@ export function BacktestResults({
     strategies,
   ]);
 
+  const isCoveredCallVisible = seriesVisibility.coveredCall !== false;
+
   return (
     <React.Fragment>
       <section className={`${panelClass} p-6 md:p-8`}>
@@ -1345,37 +1311,66 @@ export function BacktestResults({
         <ChartErrorBoundary>
           <div
             ref={chartContainerRef}
-            className={`relative h-[420px] w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-b from-white to-indigo-50/40 p-4 shadow-inner shadow-slate-200/60 ${
-              isFullscreen ? 'fixed inset-8 z-50 h-[calc(100vh-4rem)] w-[calc(100vw-4rem)] bg-white/95 p-6' : ''
+            className={`relative h-[420px] w-full overflow-hidden rounded-3xl border border-slate-200/70 bg-white p-5 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.45)] ${
+              isFullscreen
+                ? 'fixed inset-8 z-50 h-[calc(100vh-4rem)] w-[calc(100vw-4rem)] rounded-3xl bg-white p-8 ring-1 ring-slate-200/80 shadow-2xl'
+                : ''
             }`}
             onWheel={handleWheelZoom}
             onMouseDown={handleMouseDown}
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={renderedData} margin={chartMargin}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#cbd5f5" strokeOpacity={0.7} />
+                <defs>
+                  <linearGradient id={coveredCallAreaId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={coveredCallColor} stopOpacity={0.26} />
+                    <stop offset="100%" stopColor={coveredCallColor} stopOpacity={0.04} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 6" stroke={GRID_STROKE_COLOR} strokeOpacity={0.8} />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: '#1e293b' }}
+                  tickLine={false}
+                  axisLine={{ stroke: GRID_STROKE_COLOR, strokeWidth: 1 }}
+                  tickMargin={12}
                   minTickGap={30}
                   tickFormatter={formatDateTick}
                 />
                 <YAxis
                   yAxisId="value"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: VALUE_AXIS_TICK_COLOR }}
+                  tickLine={false}
+                  axisLine={{ stroke: VALUE_AXIS_LINE_COLOR, strokeWidth: 1 }}
                   tickFormatter={formatValueTick}
                   width={VALUE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
+                  tickMargin={12}
                 />
                 <YAxis
                   yAxisId="price"
                   orientation="right"
-                  tick={{ fontSize: 12, fontWeight: 600 }}
+                  tick={{ fontSize: 12, fontWeight: 600, fill: PRICE_AXIS_TICK_COLOR }}
+                  tickLine={false}
+                  axisLine={{ stroke: PRICE_AXIS_LINE_COLOR, strokeWidth: 1 }}
                   tickFormatter={formatPriceTick}
                   width={PRICE_AXIS_WIDTH}
                   domain={['auto', 'auto']}
+                  tickMargin={10}
                 />
                 <Tooltip content={<CustomTooltip />} />
+                {isCoveredCallVisible && (
+                  <Area
+                    type="monotone"
+                    dataKey="CoveredCall"
+                    yAxisId="value"
+                    stroke="none"
+                    fill={`url(#${coveredCallAreaId})`}
+                    fillOpacity={1}
+                    isAnimationActive={false}
+                    connectNulls
+                  />
+                )}
                 {earningsWeekRanges.map(range => (
                   <ReferenceArea
                     key={`earnings-${range.startIdx}-${range.endIdx}`}
@@ -1393,21 +1388,29 @@ export function BacktestResults({
                       fill: '#854d0e',
                       fontSize: 11,
                       fontWeight: 600,
-                      offset: 12,
+                      offset: 16,
                     }}
                   />
                 ))}
                 {seriesConfig.map(series => {
                   const dotRenderer = showSettlementDots ? settlementDotRenderers[series.key] : undefined;
+                  const isPrimarySeries = series.key === 'coveredCall';
+                  const isBenchmarkSeries = series.key === 'buyAndHold';
+                  const strokeWidth = isPrimarySeries ? 3.2 : series.axis === 'value' ? (isBenchmarkSeries ? 2.4 : 1.8) : 1.6;
+                  const baseOpacity = series.axis === 'price' ? 0.55 : 0.65;
+                  const strokeOpacity = isPrimarySeries ? 1 : isBenchmarkSeries ? 0.92 : baseOpacity;
                   return (
                     <Line
                       key={series.key}
                       type="monotone"
                       dataKey={series.dataKey}
                       dot={dotRenderer ?? false}
-                      activeDot={dotRenderer ? { r: 4.5 } : undefined}
-                      strokeWidth={series.axis === 'value' ? 2.5 : 1.8}
+                      activeDot={dotRenderer ? { r: isPrimarySeries ? 5 : 4 } : undefined}
+                      strokeWidth={strokeWidth}
                       stroke={series.color}
+                      strokeOpacity={strokeOpacity}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       name={series.label}
                       yAxisId={series.axis}
                       hide={seriesVisibility[series.key] === false}
@@ -1417,21 +1420,30 @@ export function BacktestResults({
                     />
                   );
                 })}
-                {deltaRollPoints.map((point, idx) => (
-                  <ReferenceLine
-                    key={`roll-${point.date}-${idx}`}
-                    x={point.date}
-                    stroke="#6366f1"
-                    strokeDasharray="4 2"
-                    strokeOpacity={0.6}
-                    yAxisId="value"
-                    label={<RollMarkerLabel />}
-                  />
-                ))}
+                {deltaRollPoints.map((point, idx) => {
+                  const value =
+                    typeof point.totalValue === 'number' && Number.isFinite(point.totalValue)
+                      ? point.totalValue
+                      : null;
+                  if (value == null) return null;
+                  return (
+                    <ReferenceDot
+                      key={`roll-${point.date}-${idx}`}
+                      x={point.date}
+                      y={value}
+                      yAxisId="value"
+                      r={6}
+                      fill="#fbbf24"
+                      stroke="#b45309"
+                      strokeWidth={1.8}
+                      ifOverflow="extendDomain"
+                    />
+                  );
+                })}
               </LineChart>
             </ResponsiveContainer>
             <div
-              className="pointer-events-none absolute z-10 flex max-h-[70%] w-[min(220px,100%)] flex-col gap-2 overflow-y-auto text-xs"
+              className="pointer-events-none absolute z-10 flex max-h-[70%] w-[min(240px,100%)] flex-col gap-2 overflow-y-auto text-xs"
               style={legendStyle}
             >
               {seriesConfig.map(series => {
@@ -1440,7 +1452,7 @@ export function BacktestResults({
                 return (
                   <div
                     key={`legend-${series.key}`}
-                    className={`flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 font-medium text-slate-700 shadow-sm backdrop-blur ${
+                    className={`flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/95 px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm backdrop-blur ${
                       active ? '' : 'opacity-45'
                     }`}
                   >
