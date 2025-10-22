@@ -118,6 +118,7 @@ type SeriesConfig = {
   axis: 'value' | 'price';
   strokeDasharray?: string;
   settlementKey?: string;
+  sharesKey?: string;
 };
 
 type SeriesKey = SeriesConfig['key'];
@@ -140,6 +141,7 @@ type StrategyComparisonRow = {
   color: string;
   label: string;
   shares: string;
+  shareDelta: string;
   finalValue: string;
   totalReturn: string;
   annualized: string;
@@ -195,6 +197,16 @@ export function BacktestResults({
       maximumFractionDigits: decimals,
     });
   }, []);
+  const formatShareDelta = useCallback((value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    if (value === 0) return '0';
+    const decimals = Number.isInteger(value) ? 0 : 2;
+    const formatted = Math.abs(value).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals,
+    });
+    return value > 0 ? `+${formatted}` : `-${formatted}`;
+  }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
     buyAndHold: true,
@@ -244,7 +256,14 @@ export function BacktestResults({
 
   const BASE_SERIES_CONFIG: readonly SeriesConfig[] = useMemo(
     () => [
-      { key: 'buyAndHold', label: 'Buy & Hold', color: '#2563eb', dataKey: 'BuyAndHold', axis: 'value' },
+      {
+        key: 'buyAndHold',
+        label: 'Buy & Hold',
+        color: '#2563eb',
+        dataKey: 'BuyAndHold',
+        axis: 'value',
+        sharesKey: 'BuyAndHoldShares',
+      },
       {
         key: 'coveredCall',
         label: formatStrategyLabel(primaryStrategy.config),
@@ -252,6 +271,7 @@ export function BacktestResults({
         dataKey: 'CoveredCall',
         axis: 'value',
         settlementKey: 'settlement',
+        sharesKey: 'CoveredCallShares',
       },
       {
         key: 'priceSpread',
@@ -271,6 +291,7 @@ export function BacktestResults({
       comparisonStrategies.map((entry, index) => {
         const dataKey = `CoveredCall_${entry.id}`;
         const settlementKey = `settlement_${entry.id}`;
+        const sharesKey = `CoveredCallShares_${entry.id}`;
         const config: SeriesConfig = {
           key: `strategy-${entry.id}`,
           label: formatStrategyLabel(entry.config),
@@ -279,6 +300,7 @@ export function BacktestResults({
           axis: 'value',
           strokeDasharray: '5 3',
           settlementKey,
+          sharesKey,
         };
         return { config, curve: entry.result.curve };
       }),
@@ -305,6 +327,10 @@ export function BacktestResults({
         if (config.settlementKey) {
           const settlementValue = curve[i]?.settlement ?? null;
           base[i][config.settlementKey] = settlementValue;
+        }
+        if (config.sharesKey) {
+          const sharesValue = curve[i]?.CoveredCallShares;
+          base[i][config.sharesKey] = typeof sharesValue === 'number' ? sharesValue : null;
         }
       }
     });
@@ -391,6 +417,16 @@ export function BacktestResults({
     seriesConfig.forEach(series => {
       if (series.settlementKey) {
         map.set(series.dataKey, series.settlementKey);
+      }
+    });
+    return map;
+  }, [seriesConfig]);
+
+  const sharesKeyByDataKey = useMemo(() => {
+    const map = new Map<string, string>();
+    seriesConfig.forEach(series => {
+      if (series.sharesKey) {
+        map.set(series.dataKey, series.sharesKey);
       }
     });
     return map;
@@ -977,6 +1013,9 @@ export function BacktestResults({
           const dataKey = item.dataKey as string;
           const settlementKey = settlementKeyByDataKey.get(dataKey);
           const settlementValue = settlementKey ? point[settlementKey] : null;
+          const sharesKey = sharesKeyByDataKey.get(dataKey);
+          const sharesRaw = sharesKey ? point[sharesKey] : null;
+          const sharesValue = typeof sharesRaw === 'number' ? sharesRaw : null;
           return {
             key: dataKey,
             dataKey,
@@ -984,6 +1023,7 @@ export function BacktestResults({
             color: (item.color as string) ?? (item.stroke as string) ?? '#6366f1',
             value: typeof item.value === 'number' ? item.value : null,
             settlement: settlementValue,
+            shares: sharesValue,
           };
         });
       const primaryEntry = strategyValues.find(entry => entry.dataKey === 'CoveredCall');
@@ -997,33 +1037,49 @@ export function BacktestResults({
                 財報週
               </div>
             )}
-            <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
+            <div>
+              <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
+              {typeof point.BuyAndHoldShares === 'number' && (
+                <div className="mt-[2px] flex items-center justify-between pl-5 text-[10px] text-slate-500">
+                  <span>持股數</span>
+                  <span>{`${formatShareCount(point.BuyAndHoldShares)} 股`}</span>
+                </div>
+              )}
+            </div>
             {strategyValues.map(entry => (
-              <div key={entry.key} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+              <div key={entry.key} className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">
-                    {entry.label}
-                    {entry.settlement && (
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
-                          entry.settlement.type === 'roll'
+                    <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} aria-hidden />
+                    <span className="flex items-center gap-2">
+                      {entry.label}
+                      {entry.settlement && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] font-semibold ${
+                            entry.settlement.type === 'roll'
+                              ? entry.settlement.rollReason === 'delta'
+                                ? 'bg-indigo-100 text-indigo-600'
+                                : 'bg-slate-200 text-slate-600'
+                              : 'bg-emerald-100 text-emerald-600'
+                          }`}
+                        >
+                          {entry.settlement.type === 'roll'
                             ? entry.settlement.rollReason === 'delta'
-                              ? 'bg-indigo-100 text-indigo-600'
-                              : 'bg-slate-200 text-slate-600'
-                            : 'bg-emerald-100 text-emerald-600'
-                        }`}
-                      >
-                        {entry.settlement.type === 'roll'
-                          ? entry.settlement.rollReason === 'delta'
-                            ? 'Delta Roll'
-                            : '例行換倉'
-                          : '到期結算'}
-                      </span>
-                    )}
+                              ? 'Delta Roll'
+                              : '例行換倉'
+                            : '到期結算'}
+                        </span>
+                      )}
+                    </span>
                   </span>
-                </span>
-                <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+                  <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+                </div>
+                {entry.shares != null && (
+                  <div className="flex items-center justify-between pl-5 text-[10px] text-slate-500">
+                    <span>持股數</span>
+                    <span>{`${formatShareCount(entry.shares)} 股`}</span>
+                  </div>
+                )}
               </div>
             ))}
             {typeof point.UnderlyingPrice === 'number' && (
@@ -1073,7 +1129,7 @@ export function BacktestResults({
         </div>
       );
     },
-    [earningsWeekDateSet, formatDateWithWeekday, rollPoints, settlementKeyByDataKey],
+    [earningsWeekDateSet, formatDateWithWeekday, formatShareCount, rollPoints, settlementKeyByDataKey, sharesKeyByDataKey],
   );
 
   const renderedData = useMemo(() => {
@@ -1127,6 +1183,8 @@ export function BacktestResults({
   const strategyComparisonRows = useMemo<StrategyComparisonRow[]>(() => {
     if (!strategies.length) return [];
 
+    const baseResult = strategies[0]?.result;
+    const baseShareCount = baseResult?.bhShares ?? null;
     const strategyRows = strategies.map((entry, index) => {
       const years = Math.max(1 / 12, entry.result.curve.length / 252);
       const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
@@ -1144,11 +1202,16 @@ export function BacktestResults({
       if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
       const options = optionFlags.length ? optionFlags.join(' / ') : '—';
       const finalValue = entry.result.curve.at(-1)?.CoveredCall;
+      const shareDeltaValue =
+        baseShareCount != null && typeof entry.result.ccShares === 'number'
+          ? entry.result.ccShares - baseShareCount
+          : null;
       return {
         id: entry.id,
         color: getStrategyColor(index),
         label: formatStrategyLabel(entry.config),
         shares: formatShareCount(entry.result.ccShares),
+        shareDelta: formatShareDelta(shareDeltaValue),
         finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
         totalReturn: formatSignedPercent(entry.result.ccReturn),
         annualized: formatSignedPercent(annualized),
@@ -1159,7 +1222,6 @@ export function BacktestResults({
       };
     });
 
-    const baseResult = strategies[0]?.result;
     const years = baseResult ? Math.max(1 / 12, baseResult.curve.length / 252) : null;
     const annualized = years != null && baseResult ? (1 + baseResult.bhReturn) ** (1 / years) - 1 : null;
     const buyHoldFinal = baseResult?.curve.at(-1)?.BuyAndHold ?? null;
@@ -1170,6 +1232,7 @@ export function BacktestResults({
       color: buyAndHoldColor,
       label: 'Buy & Hold',
       shares: formatShareCount(buyHoldShares),
+      shareDelta: '—',
       finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '—',
       totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '—',
       annualized: annualized != null ? formatSignedPercent(annualized) : '—',
@@ -1184,6 +1247,7 @@ export function BacktestResults({
   }, [
     buyAndHoldColor,
     formatShareCount,
+    formatShareDelta,
     formatSignedPercent,
     formatStrategyLabel,
     getStrategyColor,
@@ -1414,7 +1478,8 @@ export function BacktestResults({
             <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-semibold">策略</th>
-                <th className="px-4 py-3 text-right font-semibold">持股數</th>
+                <th className="px-4 py-3 text-right font-semibold">最終持股</th>
+                <th className="px-4 py-3 text-right font-semibold">持股差異 (vs Buy &amp; Hold)</th>
                 <th className="px-4 py-3 text-right font-semibold">最終資產</th>
                 <th className="px-4 py-3 text-right font-semibold">總報酬</th>
                 <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
@@ -1438,7 +1503,12 @@ export function BacktestResults({
                       <span className="font-medium text-slate-700">{row.label}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.shares}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {row.shares !== '—' ? `${row.shares} 股` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {row.shareDelta !== '—' ? `${row.shareDelta} 股` : '—'}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
                   <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.annualized}</td>
