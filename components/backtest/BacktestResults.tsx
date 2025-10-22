@@ -199,8 +199,7 @@ export function BacktestResults({
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
     buyAndHold: true,
     coveredCall: true,
-    underlying: true,
-    callStrike: true,
+    priceSpread: true,
   }));
   const [showSettlementDots, setShowSettlementDots] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -254,14 +253,12 @@ export function BacktestResults({
         axis: 'value',
         settlementKey: 'settlement',
       },
-      { key: 'underlying', label: '標的股價', color: '#0ea5e9', dataKey: 'UnderlyingPrice', axis: 'price' },
       {
-        key: 'callStrike',
-        label: '賣出履約價',
-        color: '#16a34a',
-        dataKey: 'CallStrike',
+        key: 'priceSpread',
+        label: '價差（股價-履約價）',
+        color: '#0ea5e9',
+        dataKey: 'PriceSpread',
         axis: 'price',
-        strokeDasharray: '6 3',
       },
     ],
     [formatStrategyLabel, getStrategyColor, primaryStrategy.config],
@@ -289,7 +286,15 @@ export function BacktestResults({
   );
 
   const chartData = useMemo(() => {
-    const base = result.curve.map(point => ({ ...point })) as ChartDatum[];
+    const base = result.curve.map(point => {
+      const copy = { ...point } as ChartDatum;
+      const rawUnderlying = copy.UnderlyingPrice;
+      const rawStrike = copy.CallStrike;
+      const underlying = typeof rawUnderlying === 'number' ? rawUnderlying : null;
+      const strike = typeof rawStrike === 'number' ? rawStrike : null;
+      copy.PriceSpread = underlying != null && strike != null ? underlying - strike : null;
+      return copy;
+    }) as ChartDatum[];
     if (!comparisonSeriesList.length) return base;
     comparisonSeriesList.forEach(series => {
       const { curve, config } = series;
@@ -449,8 +454,7 @@ export function BacktestResults({
       ...prev,
       buyAndHold: prev.buyAndHold ?? true,
       coveredCall: prev.coveredCall ?? true,
-      underlying: prev.underlying ?? true,
-      callStrike: prev.callStrike ?? true,
+      priceSpread: prev.priceSpread ?? true,
     }));
   }, []);
 
@@ -1022,8 +1026,13 @@ export function BacktestResults({
                 <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
               </div>
             ))}
-            <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
+            {typeof point.UnderlyingPrice === 'number' && (
+              <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
+            )}
             {typeof point.CallStrike === 'number' && <div>履約價：{point.CallStrike.toFixed(2)}</div>}
+            {typeof point.PriceSpread === 'number' && (
+              <div>價差（股價-履約價）：{formatCurrency(point.PriceSpread, 2)}</div>
+            )}
             {deltaRollMarks.length > 0 && (
               <div className="rounded-lg bg-indigo-50/80 px-2 py-1 text-[11px] font-medium text-indigo-700">
                 Delta 閾值觸發 Roll-up
