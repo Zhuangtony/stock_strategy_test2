@@ -13,6 +13,14 @@ export type StrategyConfigManagerProps = {
 
 const formatStrategyLabel = (label: string, index: number) => label || `策略 ${index + 1}`;
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const floorToTwoDecimals = (value: number) => Math.floor(value * 100) / 100;
+const parseNumberInput = (raw: string) => {
+  if (raw.trim() === '') return null;
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: StrategyConfigManagerProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -102,10 +110,11 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                         step={0.01}
                         value={config.targetDelta}
                         onChange={e => {
-                          const next = Number(e.target.value);
-                          if (!Number.isNaN(next)) {
-                            onChange(config.id, { targetDelta: next });
-                          }
+                          const parsed = parseNumberInput(e.target.value);
+                          if (parsed == null) return;
+                          const clamped = clamp(parsed, 0.1, 0.6);
+                          const floored = floorToTwoDecimals(clamped);
+                          onChange(config.id, { targetDelta: floored });
                         }}
                         className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                       />
@@ -142,10 +151,11 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                         step={0.01}
                         value={config.rollDeltaThreshold}
                         onChange={e => {
-                          const next = Number(e.target.value);
-                          if (!Number.isNaN(next)) {
-                            onChange(config.id, { rollDeltaThreshold: next });
-                          }
+                          const parsed = parseNumberInput(e.target.value);
+                          if (parsed == null) return;
+                          const clamped = clamp(parsed, 0.3, 0.95);
+                          const floored = floorToTwoDecimals(clamped);
+                          onChange(config.id, { rollDeltaThreshold: floored });
                         }}
                         disabled={!config.enableRoll}
                         className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-100"
@@ -172,10 +182,11 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                         step={1}
                         value={config.rollDaysBeforeExpiry}
                         onChange={e => {
-                          const next = Number(e.target.value);
-                          if (!Number.isNaN(next)) {
-                            onChange(config.id, { rollDaysBeforeExpiry: Math.max(0, Math.min(4, Math.round(next))) });
-                          }
+                          const parsed = parseNumberInput(e.target.value);
+                          if (parsed == null) return;
+                          const floored = Math.floor(parsed);
+                          const clamped = clamp(floored, 0, 4);
+                          onChange(config.id, { rollDaysBeforeExpiry: clamped });
                         }}
                         disabled={!config.enableRoll}
                         className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-100"
@@ -209,10 +220,11 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                           step={1}
                           value={config.premiumReinvestShareThreshold}
                           onChange={e => {
-                            const raw = Number(e.target.value);
-                            if (!Number.isNaN(raw)) {
-                              onChange(config.id, { premiumReinvestShareThreshold: raw });
-                            }
+                            const parsed = parseNumberInput(e.target.value);
+                            if (parsed == null) return;
+                            const floored = Math.floor(parsed);
+                            const clamped = clamp(floored, 1, 1000);
+                            onChange(config.id, { premiumReinvestShareThreshold: clamped });
                           }}
                           disabled={!config.reinvestPremium}
                           className="w-20 rounded border border-slate-200 px-2 py-1 text-right text-[11px] shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-100"

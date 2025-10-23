@@ -26,7 +26,9 @@ async function fetchYahooDailyViaApi(ticker: string, start: string, end: string)
 const panelClass =
   'rounded-3xl border border-slate-200/80 bg-white/95 shadow-[0_20px_45px_-28px_rgb(15_23_42_/_55%)] backdrop-blur-sm';
 
-const clampDelta = (value: number) => Math.max(0.05, Math.min(0.95, value));
+const clampRange = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const floorToTwoDecimals = (value: number) => Math.floor(value * 100) / 100;
+const clampDelta = (value: number) => clampRange(value, 0.1, 0.6);
 
 export default function Page() {
   const [ticker, setTicker] = useState('AAPL');
@@ -117,19 +119,20 @@ export default function Page() {
           if (config.id !== id) return config;
           const next: StrategyConfigInput = { ...config, ...patch };
           if (typeof patch.targetDelta === 'number') {
-            const clamped = clampDelta(Math.max(0.1, Math.min(0.6, patch.targetDelta)));
-            next.targetDelta = Number(clamped.toFixed(2));
+            const clamped = clampDelta(patch.targetDelta);
+            next.targetDelta = floorToTwoDecimals(clamped);
           }
           if (typeof patch.rollDeltaThreshold === 'number') {
-            const clamped = Math.max(0.3, Math.min(0.95, patch.rollDeltaThreshold));
-            next.rollDeltaThreshold = Number(clamped.toFixed(2));
+            const clamped = clampRange(patch.rollDeltaThreshold, 0.3, 0.95);
+            next.rollDeltaThreshold = floorToTwoDecimals(clamped);
           }
           if (typeof patch.rollDaysBeforeExpiry === 'number') {
-            next.rollDaysBeforeExpiry = Math.max(0, Math.min(4, Math.round(patch.rollDaysBeforeExpiry)));
+            const floored = Math.floor(patch.rollDaysBeforeExpiry);
+            next.rollDaysBeforeExpiry = clampRange(floored, 0, 4);
           }
           if (typeof patch.premiumReinvestShareThreshold === 'number') {
-            const sanitized = Math.max(1, Math.min(1000, Math.round(patch.premiumReinvestShareThreshold)));
-            next.premiumReinvestShareThreshold = sanitized;
+            const floored = Math.floor(patch.premiumReinvestShareThreshold);
+            next.premiumReinvestShareThreshold = clampRange(floored, 1, 1000);
           }
           if (typeof patch.label === 'string') {
             next.label = patch.label.slice(0, 40);
