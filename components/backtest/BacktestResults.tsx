@@ -1247,7 +1247,10 @@ export function BacktestResults({
           }`
         : '未啟用';
       const optionFlags: string[] = [];
-      if (entry.config.reinvestPremium) optionFlags.push('權利金再投資');
+      if (entry.config.reinvestPremium) {
+        const threshold = Math.max(1, Math.round(entry.config.premiumReinvestShareThreshold));
+        optionFlags.push(threshold > 1 ? `權利金再投資（累積 ${threshold} 股）` : '權利金再投資');
+      }
       if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
       if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
       if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');

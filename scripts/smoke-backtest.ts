@@ -74,6 +74,7 @@ async function main() {
     freq: 'weekly' as const,
     ivOverride: null as number | null,
     reinvestPremium: true,
+    premiumReinvestShareThreshold: 1,
     roundStrikeToInt: true,
     skipEarningsWeek: false,
     dynamicContracts: true,

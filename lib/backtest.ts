@@ -17,6 +17,7 @@ export interface BacktestParams {
   freq: BacktestFrequency;
   ivOverride?: number | null;
   reinvestPremium: boolean;
+  premiumReinvestShareThreshold?: number;
   roundStrikeToInt: boolean;
   skipEarningsWeek: boolean;
   dynamicContracts: boolean;
@@ -199,6 +200,30 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   let cash = params.initialCapital;
   let shares = params.shares;
   const baseContractQty = Math.floor(params.shares / 100);
+  const reinvestShareLot =
+    typeof params.premiumReinvestShareThreshold === 'number' && Number.isFinite(params.premiumReinvestShareThreshold)
+      ? Math.max(1, Math.round(params.premiumReinvestShareThreshold))
+      : 1;
+  let pendingPremiumCash = 0;
+  const applyPremiumCash = (premiumCash: number, price: number) => {
+    cash += premiumCash;
+    if (!params.reinvestPremium) return;
+    pendingPremiumCash += premiumCash;
+    const lotSize = reinvestShareLot;
+    const costPerLot = price * lotSize;
+    if (!(costPerLot > 0)) return;
+    const lots = Math.floor(pendingPremiumCash / costPerLot);
+    if (lots <= 0) return;
+    const sharesToBuy = lots * lotSize;
+    const totalCost = sharesToBuy * price;
+    shares += sharesToBuy;
+    cash -= totalCost;
+    pendingPremiumCash = Math.max(0, pendingPremiumCash - totalCost);
+  };
+  const reducePremiumPool = (amount: number) => {
+    if (amount <= 0) return;
+    pendingPremiumCash = Math.max(0, pendingPremiumCash - amount);
+  };
   let openCall: ActiveCallPosition | null = null;
   const cc_value: number[] = [];
   const ccSharesSeries: number[] = [];
@@ -260,6 +285,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
           const closeValue = bsCallPrice(S, openCall.strike, params.r, params.q, iv, timeToExpiry);
           const closeCost = closeValue * (openCall.qty * 100);
           cash -= closeCost;
+          reducePremiumPool(closeCost);
           const rollPnl = (openCall.premium - closeValue) * (openCall.qty * 100);
           const totalAfterClose = cash + shares * S;
           const rollReason: 'delta' | 'scheduled' = meetsDeltaTrigger ? 'delta' : 'scheduled';
@@ -304,14 +330,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
               const newPremium = bsCallPrice(S, newStrike, params.r, params.q, iv, newTerm);
               openCall = { strike: newStrike, premium: newPremium, qty: newQty, sellIdx: i, expIdx: targetExpIdx };
               const premiumCash = newPremium * (newQty * 100);
-              cash += premiumCash;
-              if (params.reinvestPremium) {
-                const lotShares = Math.floor(premiumCash / S);
-                if (lotShares > 0) {
-                  shares += lotShares;
-                  cash -= lotShares * S;
-                }
-              }
+              applyPremiumCash(premiumCash, S);
             } else {
               openCall = null;
             }
@@ -327,20 +346,12 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
       const T = Math.max(horizon / 252, 1 / 252);
       const qty = params.dynamicContracts ? Math.floor(shares / 100) : baseContractQty;
       if (qty > 0) {
-        const S = prices[i];
         let strike = findStrikeForTargetDelta(S, strikeTargetDelta, params.r, params.q, iv, T);
         if (params.roundStrikeToInt) strike = Math.max(1, Math.round(strike));
         const premium = bsCallPrice(S, strike, params.r, params.q, iv, T);
         openCall = { strike, premium, qty, sellIdx: i, expIdx: planForToday.expIdx };
         const premiumCash = premium * (qty * 100);
-        cash += premiumCash;
-        if (params.reinvestPremium) {
-          const lotShares = Math.floor(premiumCash / S);
-          if (lotShares > 0) {
-            shares += lotShares;
-            cash -= lotShares * S;
-          }
-        }
+        applyPremiumCash(premiumCash, S);
       }
     }
 
@@ -365,6 +376,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
         const rebuy = deliverable;
         if (rebuy > 0) {
           cash -= rebuy * Sexp;
+          reducePremiumPool(rebuy * Sexp);
           shares += rebuy;
         }
       }

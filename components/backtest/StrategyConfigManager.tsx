@@ -190,15 +190,36 @@ export function StrategyConfigManager({ configs, onAdd, onRemove, onChange }: St
                 </div>
                 {advancedOpen && (
                   <div className="grid gap-3 rounded-lg bg-slate-50/80 p-3 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.reinvestPremium}
-                        onChange={e => onChange(config.id, { reinvestPremium: e.target.checked })}
-                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span>權利金再投資</span>
-                    </label>
+                    <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={config.reinvestPremium}
+                          onChange={e => onChange(config.id, { reinvestPremium: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>權利金再投資</span>
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2 pl-6 text-[11px] text-slate-500">
+                        <span>累積</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={1000}
+                          step={1}
+                          value={config.premiumReinvestShareThreshold}
+                          onChange={e => {
+                            const raw = Number(e.target.value);
+                            if (!Number.isNaN(raw)) {
+                              onChange(config.id, { premiumReinvestShareThreshold: raw });
+                            }
+                          }}
+                          disabled={!config.reinvestPremium}
+                          className="w-20 rounded border border-slate-200 px-2 py-1 text-right text-[11px] shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-100"
+                        />
+                        <span>股後投入</span>
+                      </div>
+                    </div>
                     <label className="flex items-center gap-2">
                       <input
                         type="checkbox"
