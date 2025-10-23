@@ -88,6 +88,38 @@ describe('math/option helpers', () => {
     expect(res.settlements.length).toBeGreaterThan(0);
   });
 
+  it('treats target and roll thresholds above the cap as capped values', () => {
+    const rows = [
+      { date: '2025-01-02', close: 100, adjClose: 100 },
+      { date: '2025-01-03', close: 101, adjClose: 101 },
+      { date: '2025-01-06', close: 102, adjClose: 102 },
+      { date: '2025-01-07', close: 103, adjClose: 103 },
+      { date: '2025-01-08', close: 104, adjClose: 104 },
+      { date: '2025-01-09', close: 105, adjClose: 105 },
+      { date: '2025-01-10', close: 103, adjClose: 103 },
+    ];
+    const capped = runBacktest(rows, {
+      ...baseParams,
+      targetDelta: 0.95,
+      rollDeltaThreshold: 0.95,
+    });
+    const aboveCap = runBacktest(rows, {
+      ...baseParams,
+      targetDelta: 0.99,
+      rollDeltaThreshold: 0.99,
+    });
+    expect(aboveCap.effectiveTargetDelta).toBeCloseTo(0.95, 5);
+    expect(aboveCap.rollDeltaTrigger).toBeCloseTo(0.95, 5);
+    expect(aboveCap.effectiveTargetDelta).toBeCloseTo(capped.effectiveTargetDelta, 10);
+    expect(aboveCap.rollDeltaTrigger).toBeCloseTo(capped.rollDeltaTrigger, 10);
+    expect(aboveCap.curve.map(point => point.CallStrike)).toEqual(
+      capped.curve.map(point => point.CallStrike),
+    );
+    expect(aboveCap.curve.map(point => point.CoveredCall)).toEqual(
+      capped.curve.map(point => point.CoveredCall),
+    );
+  });
+
   it('skips opening positions during earnings week when configured', () => {
     const rows = [
       { date: '2024-01-02', close: 100, adjClose: 100 },
@@ -140,5 +172,28 @@ describe('math/option helpers', () => {
     const firstBatched = batched.curve.findIndex(point => point.CoveredCallShares > initialShares);
     expect(firstImmediate).toBeGreaterThanOrEqual(0);
     expect(firstBatched).toBeGreaterThan(firstImmediate);
+  });
+
+  it('floors fractional reinvest thresholds before reinvesting', () => {
+    const rows: { date: string; close: number; adjClose: number }[] = [];
+    for (let i = 0; i < 90; i++) {
+      const d = new Date(Date.UTC(2024, 0, 2 + i));
+      const iso = d.toISOString().slice(0, 10);
+      rows.push({ date: iso, close: 100, adjClose: 100 });
+    }
+    const floored = runBacktest(rows, {
+      ...baseParams,
+      enableRoll: false,
+      premiumReinvestShareThreshold: 2,
+    });
+    const fractional = runBacktest(rows, {
+      ...baseParams,
+      enableRoll: false,
+      premiumReinvestShareThreshold: 2.75,
+    });
+    expect(fractional.curve.map(point => point.CoveredCallShares)).toEqual(
+      floored.curve.map(point => point.CoveredCallShares),
+    );
+    expect(fractional.ccShares).toBe(floored.ccShares);
   });
 });
