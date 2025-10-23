@@ -202,7 +202,7 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   const baseContractQty = Math.floor(params.shares / 100);
   const reinvestShareLot =
     typeof params.premiumReinvestShareThreshold === 'number' && Number.isFinite(params.premiumReinvestShareThreshold)
-      ? Math.max(1, Math.round(params.premiumReinvestShareThreshold))
+      ? Math.max(1, Math.floor(params.premiumReinvestShareThreshold))
       : 1;
   let pendingPremiumCash = 0;
   const applyPremiumCash = (premiumCash: number, price: number) => {
