@@ -63,6 +63,15 @@ export default function Page() {
       if (!Number.isFinite(config.targetDelta) || config.targetDelta < 0.1 || config.targetDelta > 0.6) {
         return `${name} 的 Delta 需介於 0.10 ~ 0.60`;
       }
+      if (config.reinvestPremium) {
+        if (
+          !Number.isFinite(config.premiumReinvestShareThreshold) ||
+          config.premiumReinvestShareThreshold < 1 ||
+          config.premiumReinvestShareThreshold > 1000
+        ) {
+          return `${name} 的權利金再投資門檻需介於 1 ~ 1000 股`;
+        }
+      }
       if (config.enableRoll) {
         if (
           !Number.isFinite(config.rollDeltaThreshold) ||
@@ -118,6 +127,10 @@ export default function Page() {
           if (typeof patch.rollDaysBeforeExpiry === 'number') {
             next.rollDaysBeforeExpiry = Math.max(0, Math.min(4, Math.round(patch.rollDaysBeforeExpiry)));
           }
+          if (typeof patch.premiumReinvestShareThreshold === 'number') {
+            const sanitized = Math.max(1, Math.min(1000, Math.round(patch.premiumReinvestShareThreshold)));
+            next.premiumReinvestShareThreshold = sanitized;
+          }
           if (typeof patch.label === 'string') {
             next.label = patch.label.slice(0, 40);
           }
@@ -160,6 +173,7 @@ export default function Page() {
           ivOverride,
           earningsDates: payload.earningsDates,
           reinvestPremium: config.reinvestPremium,
+          premiumReinvestShareThreshold: config.premiumReinvestShareThreshold,
           roundStrikeToInt: config.roundStrikeToInt,
           skipEarningsWeek: config.skipEarningsWeek,
           dynamicContracts: config.dynamicContracts,

@@ -5,6 +5,7 @@ export type StrategyConfigInput = {
   label: string;
   targetDelta: number;
   reinvestPremium: boolean;
+  premiumReinvestShareThreshold: number;
   roundStrikeToInt: boolean;
   skipEarningsWeek: boolean;
   dynamicContracts: boolean;
@@ -28,6 +29,7 @@ export const createStrategyConfig = (overrides?: Partial<Omit<StrategyConfigInpu
   label: overrides?.label ?? '策略',
   targetDelta: overrides?.targetDelta ?? 0.3,
   reinvestPremium: overrides?.reinvestPremium ?? true,
+  premiumReinvestShareThreshold: overrides?.premiumReinvestShareThreshold ?? 1,
   roundStrikeToInt: overrides?.roundStrikeToInt ?? true,
   skipEarningsWeek: overrides?.skipEarningsWeek ?? false,
   dynamicContracts: overrides?.dynamicContracts ?? true,

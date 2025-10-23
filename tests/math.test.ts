@@ -62,6 +62,7 @@ describe('math/option helpers', () => {
     freq: 'weekly',
     ivOverride: 0.3,
     reinvestPremium: true,
+    premiumReinvestShareThreshold: 1,
     roundStrikeToInt: true,
     skipEarningsWeek: false,
     dynamicContracts: true,
@@ -115,5 +116,29 @@ describe('math/option helpers', () => {
     }
     const res = runBacktest(rows, { ...baseParams, enableRoll: true, rollDeltaThreshold: 0.55 });
     expect(res.rollEvents.length).toBeGreaterThan(0);
+  });
+
+  it('waits until premium can buy configured share lots before reinvesting', () => {
+    const rows: { date: string; close: number; adjClose: number }[] = [];
+    for (let i = 0; i < 80; i++) {
+      const d = new Date(Date.UTC(2024, 0, 2 + i));
+      const iso = d.toISOString().slice(0, 10);
+      rows.push({ date: iso, close: 100, adjClose: 100 });
+    }
+    const immediate = runBacktest(rows, {
+      ...baseParams,
+      enableRoll: false,
+      premiumReinvestShareThreshold: 1,
+    });
+    const batched = runBacktest(rows, {
+      ...baseParams,
+      enableRoll: false,
+      premiumReinvestShareThreshold: 5,
+    });
+    const initialShares = baseParams.shares;
+    const firstImmediate = immediate.curve.findIndex(point => point.CoveredCallShares > initialShares);
+    const firstBatched = batched.curve.findIndex(point => point.CoveredCallShares > initialShares);
+    expect(firstImmediate).toBeGreaterThanOrEqual(0);
+    expect(firstBatched).toBeGreaterThan(firstImmediate);
   });
 });
