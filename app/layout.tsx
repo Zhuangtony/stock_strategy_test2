@@ -1,9 +1,11 @@
-import './globals.css';
+﻿import './globals.css';
 import type { ReactNode } from 'react';
 
+import { t } from '../lib/i18n';
+
 export const metadata = {
-  title: 'Covered Call Backtester',
-  description: 'Sell-covered call strategy vs buy-and-hold — Next.js',
+  title: t('app.title'),
+  description: t('app.description'),
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -15,3 +17,4 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   );
 }
+

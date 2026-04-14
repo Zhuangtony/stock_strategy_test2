@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, {
   useCallback,
@@ -24,6 +24,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
+import { t } from '../../lib/i18n';
 import { generateCycleBoundaries, type BacktestCurvePoint } from '../../lib/backtest';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { StrategyConfigInput, StrategyRunResult } from './types';
@@ -166,18 +167,18 @@ export function BacktestResults({
   const formatStrategyLabel = useCallback(
     (config: StrategyConfigInput) => {
       const base = config.label.trim() || 'Covered Call';
-      return `${base} (Δ${config.targetDelta.toFixed(2)})`;
+      return `${base} (?${config.targetDelta.toFixed(2)})`;
     },
     [],
   );
   const formatSignedPercent = useCallback((value: number) => {
-    if (!Number.isFinite(value)) return '—';
+    if (!Number.isFinite(value)) return '??;
     const pct = value * 100;
     const digits = Math.abs(pct) >= 100 ? 1 : 2;
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(digits)}%`;
   }, []);
   const formatShareCount = useCallback((value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '??;
     const decimals = Number.isInteger(value) ? 0 : 2;
     return value.toLocaleString('en-US', {
       minimumFractionDigits: 0,
@@ -185,7 +186,7 @@ export function BacktestResults({
     });
   }, []);
   const formatShareDelta = useCallback((value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '??;
     if (value === 0) return '0';
     const decimals = Number.isInteger(value) ? 0 : 2;
     const formatted = Math.abs(value).toLocaleString('en-US', {
@@ -264,7 +265,7 @@ export function BacktestResults({
       },
       {
         key: 'priceSpread',
-        label: '價差（股價-履約價）',
+        label: '?孵榆嚗??撅亦??對?',
         color: '#0ea5e9',
         dataKey: 'PriceSpread',
         axis: 'price',
@@ -1075,15 +1076,15 @@ export function BacktestResults({
           <div className="mt-2 space-y-1">
             {isEarningsWeek && (
               <div className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-[2px] text-[10px] font-semibold text-amber-700">
-                財報週
+                鞎∪??
               </div>
             )}
             <div>
-              <div>Buy &amp; Hold：{formatCurrency(point.BuyAndHold)}</div>
+              <div>Buy &amp; Hold嚗formatCurrency(point.BuyAndHold)}</div>
               {typeof point.BuyAndHoldShares === 'number' && (
                 <div className="mt-[2px] flex items-center justify-between pl-5 text-[10px] text-slate-500">
-                  <span>持股數</span>
-                  <span>{`${formatShareCount(point.BuyAndHoldShares)} 股`}</span>
+                  <span>???/span>
+                  <span>{`${formatShareCount(point.BuyAndHoldShares)} ?︶}</span>
                 </div>
               )}
             </div>
@@ -1107,64 +1108,64 @@ export function BacktestResults({
                           {entry.settlement.type === 'roll'
                             ? entry.settlement.rollReason === 'delta'
                               ? 'Delta Roll'
-                              : '例行換倉'
-                            : '到期結算'}
+                              : '靘???
+                            : '?唳?蝯?'}
                         </span>
                       )}
                     </span>
                   </span>
-                  <span>{entry.value != null ? formatCurrency(entry.value) : '—'}</span>
+                  <span>{entry.value != null ? formatCurrency(entry.value) : '??}</span>
                 </div>
                 {entry.shares != null && (
                   <div className="flex items-center justify-between pl-5 text-[10px] text-slate-500">
-                    <span>持股數</span>
-                    <span>{`${formatShareCount(entry.shares)} 股`}</span>
+                    <span>???/span>
+                    <span>{`${formatShareCount(entry.shares)} ?︶}</span>
                   </div>
                 )}
               </div>
             ))}
             {typeof point.UnderlyingPrice === 'number' && (
-              <div>標的股價：{formatCurrency(point.UnderlyingPrice, 2)}</div>
+              <div>璅??∪嚗formatCurrency(point.UnderlyingPrice, 2)}</div>
             )}
-            {typeof callStrike === 'number' && <div>履約價：{callStrike.toFixed(2)}</div>}
+            {typeof callStrike === 'number' && <div>撅亦??對?{callStrike.toFixed(2)}</div>}
             {typeof point.PriceSpread === 'number' && (
-              <div>價差（股價-履約價）：{formatCurrency(point.PriceSpread, 2)}</div>
+              <div>?孵榆嚗??撅亦??對?嚗formatCurrency(point.PriceSpread, 2)}</div>
             )}
             {deltaRollMarks.length > 0 && (
               <div className="rounded-lg bg-indigo-50/80 px-2 py-1 text-[11px] font-medium text-indigo-700">
-                Delta 閾值觸發 Roll-up
+                Delta ?曉潸孛??Roll-up
               </div>
             )}
             {scheduledRollMarks.length > 0 && (
               <div className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
-                例行換倉（Roll-out）
+                靘???Roll-out嚗?
               </div>
             )}
             {settlement && (
               <div className="mt-2 rounded-lg border border-slate-200/70 bg-white/80 p-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  {settlement.type === 'roll' ? '提前換倉紀錄' : '到期結算'}
+                  {settlement.type === 'roll' ? '?????? : '?唳?蝯?'}
                 </div>
                 <div className="mt-1 space-y-1 text-[11px] text-slate-600">
-                  <div>盈虧：{formatPnL(settlement.pnl)} USD</div>
-                  <div>履約價：{settlement.strike.toFixed(2)}</div>
-                  <div>標的價格：{settlement.underlying.toFixed(2)}</div>
+                  <div>?嚗formatPnL(settlement.pnl)} USD</div>
+                  <div>撅亦??對?{settlement.strike.toFixed(2)}</div>
+                  <div>璅??寞嚗settlement.underlying.toFixed(2)}</div>
                   {typeof settlement.qty === 'number' && settlement.qty > 0 && (
-                    <div>賣出權利金：{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
+                    <div>鞈?甈??{formatCurrency(settlement.premium * settlement.qty * 100, 2)} USD</div>
                   )}
-                  {typeof settlement.delta === 'number' && <div>Delta：{settlement.delta.toFixed(2)}</div>}
+                  {typeof settlement.delta === 'number' && <div>Delta嚗settlement.delta.toFixed(2)}</div>}
                   {settlement.type === 'roll' && (
                     <div className="text-[11px] text-slate-500">
                       {settlement.rollReason === 'delta'
-                        ? '因 Delta 達到設定閾值提前換倉'
-                        : '例行提前換倉至下一期合約'}
+                        ? '??Delta ?閮剖??曉潭?????
+                        : '靘????銝???蝝?}
                     </div>
                   )}
                 </div>
               </div>
             )}
             {typeof callDelta === 'number' && (
-              <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">當日 Delta：{callDelta.toFixed(2)}</div>
+              <div className="mt-3 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600">?嗆 Delta嚗callDelta.toFixed(2)}</div>
             )}
           </div>
         </div>
@@ -1240,21 +1241,21 @@ export function BacktestResults({
       const years = Math.max(1 / 12, entry.result.curve.length / 252);
       const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
       const rollDescription = entry.config.enableRoll
-        ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
+        ? `? ??${entry.config.rollDeltaThreshold.toFixed(2)}嚗?{
             entry.config.rollDaysBeforeExpiry === 0
-              ? '到期日換倉'
-              : `提前 ${entry.config.rollDaysBeforeExpiry} 日`
+              ? '?唳??交???
+              : `?? ${entry.config.rollDaysBeforeExpiry} ?匝
           }`
-        : '未啟用';
+        : '?芸???;
       const optionFlags: string[] = [];
       if (entry.config.reinvestPremium) {
         const threshold = Math.max(1, Math.round(entry.config.premiumReinvestShareThreshold));
-        optionFlags.push(threshold > 1 ? `權利金再投資（累積 ${threshold} 股）` : '權利金再投資');
+        optionFlags.push(threshold > 1 ? `甈????嚗敞蝛?${threshold} ?∴?` : '甈????');
       }
-      if (entry.config.dynamicContracts) optionFlags.push('合約張數動態');
-      if (entry.config.skipEarningsWeek) optionFlags.push('跳過財報週');
-      if (!entry.config.roundStrikeToInt) optionFlags.push('履約價允許小數');
-      const options = optionFlags.length ? optionFlags.join(' / ') : '—';
+      if (entry.config.dynamicContracts) optionFlags.push('??撘菜??');
+      if (entry.config.skipEarningsWeek) optionFlags.push('頝喲?鞎∪??);
+      if (!entry.config.roundStrikeToInt) optionFlags.push('撅亦??孵?閮勗???);
+      const options = optionFlags.length ? optionFlags.join(' / ') : '??;
       const finalValue = entry.result.curve.at(-1)?.CoveredCall;
       const shareDeltaValue =
         baseShareCount != null && typeof entry.result.ccShares === 'number'
@@ -1266,7 +1267,7 @@ export function BacktestResults({
         label: formatStrategyLabel(entry.config),
         shares: formatShareCount(entry.result.ccShares),
         shareDelta: formatShareDelta(shareDeltaValue),
-        finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
+        finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '??,
         totalReturn: formatSignedPercent(entry.result.ccReturn),
         annualized: formatSignedPercent(annualized),
         winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
@@ -1286,14 +1287,14 @@ export function BacktestResults({
       color: buyAndHoldColor,
       label: 'Buy & Hold',
       shares: formatShareCount(buyHoldShares),
-      shareDelta: '—',
-      finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '—',
-      totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '—',
-      annualized: annualized != null ? formatSignedPercent(annualized) : '—',
-      winRate: '—',
-      relativeReturn: '—',
-      rollDescription: '—',
-      options: '—',
+      shareDelta: '??,
+      finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '??,
+      totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '??,
+      annualized: annualized != null ? formatSignedPercent(annualized) : '??,
+      winRate: '??,
+      relativeReturn: '??,
+      rollDescription: '??,
+      options: '??,
       isBenchmark: true,
     };
 
@@ -1315,8 +1316,8 @@ export function BacktestResults({
       <section className={`${panelClass} p-6 md:p-8`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">資產曲線</h2>
-            <p className="text-xs text-slate-500">透過下方工具列調整顯示密度、序列可見性與滾動範圍。</p>
+            <h2 className="text-lg font-semibold text-slate-900">鞈?脩?</h2>
+            <p className="text-xs text-slate-500">??銝撌亙?矽?湧＊蝷箏?摨艾??閬扯?皛曉?蝭???/p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <button
@@ -1324,21 +1325,21 @@ export function BacktestResults({
               onClick={() => setPointDensity('dense')}
               className={`rounded-lg px-3 py-1 font-medium transition ${pointDensity === 'dense' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:bg-indigo-50'}`}
             >
-              高密度
+              擃?摨?
             </button>
             <button
               type="button"
               onClick={() => setPointDensity('normal')}
               className={`rounded-lg px-3 py-1 font-medium transition ${pointDensity === 'normal' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:bg-indigo-50'}`}
             >
-              標準
+              璅?
             </button>
             <button
               type="button"
               onClick={() => setPointDensity('sparse')}
               className={`rounded-lg px-3 py-1 font-medium transition ${pointDensity === 'sparse' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:bg-indigo-50'}`}
             >
-              低密度
+              雿?摨?
             </button>
             <button
               type="button"
@@ -1350,10 +1351,10 @@ export function BacktestResults({
                   : 'border-slate-200 bg-white text-slate-400 hover:border-indigo-200 hover:text-indigo-500'
               }`}
             >
-              {showSettlementDots ? '換倉點：顯示' : '換倉點：隱藏'}
+              {showSettlementDots ? '??嚗＊蝷? : '??嚗??}
             </button>
             <div className="ml-2 flex items-center gap-2">
-              <span className="text-slate-500">顯示序列</span>
+              <span className="text-slate-500">憿舐內摨?</span>
               <div className="flex items-center gap-2">
                 {seriesConfig.map(series => {
                   const active = seriesVisibility[series.key] ?? true;
@@ -1385,7 +1386,7 @@ export function BacktestResults({
                   onClick={handleDownloadCsv}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 transition hover:bg-indigo-50"
                 >
-                  匯出 CSV
+                  {t('actions.exportCsv')}
                 </button>
               )}
               <button
@@ -1393,7 +1394,7 @@ export function BacktestResults({
                 onClick={handleEnterFullscreen}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1 font-medium text-slate-600 transition hover:bg-indigo-50"
               >
-                全螢幕
+                ?刻撟?
               </button>
             </div>
           </div>
@@ -1473,7 +1474,7 @@ export function BacktestResults({
                     fillOpacity={0.18}
                     {...(valueAxisExtent ? { y1: valueAxisExtent.min, y2: valueAxisExtent.max } : {})}
                     label={{
-                      value: '財報週',
+                      value: '鞎∪??,
                       position: 'insideTopLeft',
                       fill: '#854d0e',
                       fontSize: 11,
@@ -1563,7 +1564,7 @@ export function BacktestResults({
                 isFullscreen ? 'absolute right-6 top-6 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-slate-600 shadow-lg shadow-indigo-200 transition hover:bg-indigo-50' : 'hidden'
               }`}
             >
-              關閉全螢幕
+              ???刻撟?
             </button>
           </div>
         </ChartErrorBoundary>
@@ -1572,23 +1573,23 @@ export function BacktestResults({
 
       <section className={`${panelClass} p-6 md:p-8`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-900">策略比較</h2>
-          <p className="text-xs text-slate-500">所有自訂策略將與 Buy &amp; Hold 同列呈現以便比較。</p>
+          <h2 className="text-lg font-semibold text-slate-900">蝑瘥?</h2>
+          <p className="text-xs text-slate-500">??閮??亙???Buy &amp; Hold ???隞乩噶瘥???/p>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
             <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-4 py-3 font-semibold">策略</th>
-                <th className="px-4 py-3 text-right font-semibold">最終持股</th>
-                <th className="px-4 py-3 text-right font-semibold">持股差異 (vs Buy &amp; Hold)</th>
-                <th className="px-4 py-3 text-right font-semibold">最終資產</th>
-                <th className="px-4 py-3 text-right font-semibold">總報酬</th>
-                <th className="px-4 py-3 text-right font-semibold">年化 (估)</th>
-                <th className="px-4 py-3 text-right font-semibold">勝率 / 次數</th>
-                <th className="px-4 py-3 text-right font-semibold">相對 Buy &amp; Hold</th>
-                <th className="px-4 py-3 font-semibold">Roll 策略</th>
-                <th className="px-4 py-3 font-semibold">進階選項</th>
+                <th className="px-4 py-3 font-semibold">蝑</th>
+                <th className="px-4 py-3 text-right font-semibold">?蝯???/th>
+                <th className="px-4 py-3 text-right font-semibold">?撌桃 (vs Buy &amp; Hold)</th>
+                <th className="px-4 py-3 text-right font-semibold">?蝯???/th>
+                <th className="px-4 py-3 text-right font-semibold">蝮賢??/th>
+                <th className="px-4 py-3 text-right font-semibold">撟游? (隡?</th>
+                <th className="px-4 py-3 text-right font-semibold">?? / 甈⊥</th>
+                <th className="px-4 py-3 text-right font-semibold">?詨? Buy &amp; Hold</th>
+                <th className="px-4 py-3 font-semibold">Roll 蝑</th>
+                <th className="px-4 py-3 font-semibold">?脤??賊?</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1606,10 +1607,10 @@ export function BacktestResults({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                    {row.shares !== '—' ? `${row.shares} 股` : '—'}
+                    {row.shares !== '?? ? `${row.shares} ?︶ : '??}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                    {row.shareDelta !== '—' ? `${row.shareDelta} 股` : '—'}
+                    {row.shareDelta !== '?? ? `${row.shareDelta} ?︶ : '??}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.finalValue}</td>
                   <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{row.totalReturn}</td>
@@ -1624,6 +1625,53 @@ export function BacktestResults({
           </table>
         </div>
       </section>
+      <section className={`${panelClass} p-6 md:p-8`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">{t('table.title')}</h2>
+          <p className="text-xs text-slate-500">{t('table.subtitle')}</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">指標</th>
+                <th className="px-4 py-3 text-right font-semibold">Buy &amp; Hold</th>
+                <th className="px-4 py-3 text-right font-semibold">{formatStrategyLabel(primaryStrategy.config)}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              <tr>
+                <td className="px-4 py-3">{t('labels.annualized')}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.bhAnnualizedReturn)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.ccAnnualizedReturn)}</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">{t('labels.annVol')}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.bhAnnVol)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.ccAnnVol)}</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">{t('labels.sharpe')}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{Number.isFinite(result.bhSharpe) ? result.bhSharpe.toFixed(2) : '—'}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{Number.isFinite(result.ccSharpe) ? result.ccSharpe.toFixed(2) : '—'}</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">{t('labels.maxDrawdown')}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.bhMaxDrawdown)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{formatSignedPercent(result.ccMaxDrawdown)}</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">{t('labels.calmar')}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{Number.isFinite(result.bhCalmar) ? result.bhCalmar.toFixed(2) : '—'}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{Number.isFinite(result.ccCalmar) ? result.ccCalmar.toFixed(2) : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </React.Fragment>
   );
 }
+
+
+
