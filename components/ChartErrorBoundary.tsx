@@ -1,5 +1,6 @@
-"use client";
-import React from 'react';
+﻿"use client";
+import React from "react";
+import { t } from "../lib/i18n";
 
 type Props = {
   children: React.ReactNode;
@@ -19,8 +20,7 @@ export default class ChartErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // noop: could integrate logging here
-    console.error('ChartErrorBoundary caught:', error, info);
+    console.error("ChartErrorBoundary caught:", error, info);
   }
 
   handleReset = () => {
@@ -32,7 +32,7 @@ export default class ChartErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex h-full min-h-[12rem] flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          <div className="font-semibold">圖表發生錯誤，已安全隔離</div>
+          <div className="font-semibold">{t('chart.error.title')}</div>
           {this.state.error?.message && (
             <div className="mt-1 line-clamp-3 text-xs opacity-80">{String(this.state.error.message)}</div>
           )}
@@ -42,7 +42,7 @@ export default class ChartErrorBoundary extends React.Component<Props, State> {
               onClick={this.handleReset}
               className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-red-700 hover:bg-red-100"
             >
-              重新載入圖表
+              {t('chart.error.retry')}
             </button>
           </div>
         </div>
@@ -51,4 +51,3 @@ export default class ChartErrorBoundary extends React.Component<Props, State> {
     return this.props.children as React.ReactElement;
   }
 }
-

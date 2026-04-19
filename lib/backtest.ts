@@ -8,6 +8,68 @@ export type OhlcRow = {
   adjClose: number;
 };
 
+type PerfMetrics = {
+  annualizedReturn: number;
+  annualizedVolatility: number;
+  sharpe: number;
+  maxDrawdown: number;
+  calmar: number;
+};
+
+function computePerfMetrics(series: number[], annualRiskFreeRate: number): PerfMetrics {
+  if (series.length < 2) {
+    return {
+      annualizedReturn: 0,
+      annualizedVolatility: 0,
+      sharpe: 0,
+      maxDrawdown: 0,
+      calmar: 0,
+    };
+  }
+
+  const totalReturn = series[series.length - 1] / series[0] - 1;
+  const years = Math.max(1 / 12, series.length / 252);
+  const annualizedReturn = (1 + totalReturn) ** (1 / years) - 1;
+
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1];
+    const curr = series[i];
+    if (prev > 0 && Number.isFinite(prev) && Number.isFinite(curr)) {
+      dailyReturns.push(curr / prev - 1);
+    }
+  }
+
+  const mean = dailyReturns.length
+    ? dailyReturns.reduce((acc, value) => acc + value, 0) / dailyReturns.length
+    : 0;
+  const variance =
+    dailyReturns.length > 1
+      ? dailyReturns.reduce((acc, value) => acc + (value - mean) ** 2, 0) / (dailyReturns.length - 1)
+      : 0;
+  const annualizedVolatility = Math.sqrt(Math.max(0, variance)) * Math.sqrt(252);
+  const sharpe = annualizedVolatility > 0 ? (annualizedReturn - annualRiskFreeRate) / annualizedVolatility : 0;
+
+  let peak = series[0];
+  let maxDrawdown = 0;
+  for (const value of series) {
+    if (value > peak) peak = value;
+    if (peak > 0) {
+      const drawdown = value / peak - 1;
+      if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+    }
+  }
+  const calmar = maxDrawdown < 0 ? annualizedReturn / Math.abs(maxDrawdown) : 0;
+
+  return {
+    annualizedReturn,
+    annualizedVolatility,
+    sharpe,
+    maxDrawdown,
+    calmar,
+  };
+}
+
 export interface BacktestParams {
   initialCapital: number;
   shares: number;
@@ -65,6 +127,16 @@ export interface RunBacktestResult {
   curve: BacktestCurvePoint[];
   bhReturn: number;
   ccReturn: number;
+  bhAnnualizedReturn: number;
+  ccAnnualizedReturn: number;
+  bhAnnualizedVolatility: number;
+  ccAnnualizedVolatility: number;
+  bhSharpe: number;
+  ccSharpe: number;
+  bhMaxDrawdown: number;
+  ccMaxDrawdown: number;
+  bhCalmar: number;
+  ccCalmar: number;
   hv: number;
   ivUsed: number;
   bhShares: number;
@@ -456,6 +528,8 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
   const ccReturn = (cc_value.at(-1)! / cc_value[0] - 1);
+  const bhPerf = computePerfMetrics(bh_value, params.r);
+  const ccPerf = computePerfMetrics(cc_value, params.r);
   const settlementTrades = settlements.filter(s => s.qty > 0);
   const winningTrades = settlementTrades.filter(s => s.pnl > 0).length;
   const ccWinRate = settlementTrades.length > 0 ? winningTrades / settlementTrades.length : 0;
@@ -463,6 +537,16 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     curve: out,
     bhReturn,
     ccReturn,
+    bhAnnualizedReturn: bhPerf.annualizedReturn,
+    ccAnnualizedReturn: ccPerf.annualizedReturn,
+    bhAnnualizedVolatility: bhPerf.annualizedVolatility,
+    ccAnnualizedVolatility: ccPerf.annualizedVolatility,
+    bhSharpe: bhPerf.sharpe,
+    ccSharpe: ccPerf.sharpe,
+    bhMaxDrawdown: bhPerf.maxDrawdown,
+    ccMaxDrawdown: ccPerf.maxDrawdown,
+    bhCalmar: bhPerf.calmar,
+    ccCalmar: ccPerf.calmar,
     hv,
     ivUsed: iv,
     bhShares: params.shares,

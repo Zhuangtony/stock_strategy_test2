@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import ChartErrorBoundary from '../../components/ChartErrorBoundary';
 import { generateCycleBoundaries, type BacktestCurvePoint } from '../../lib/backtest';
+import { t } from '../../lib/i18n';
 import { COMPARISON_SERIES_COLORS } from './constants';
 import type { StrategyConfigInput, StrategyRunResult } from './types';
 
@@ -193,6 +194,10 @@ export function BacktestResults({
       maximumFractionDigits: decimals,
     });
     return value > 0 ? `+${formatted}` : `-${formatted}`;
+  }, []);
+  const formatRatio = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '—';
+    return value.toFixed(2);
   }, []);
   const [pointDensity, setPointDensity] = useState<'dense' | 'normal' | 'sparse'>('normal');
   const [seriesVisibility, setSeriesVisibility] = useState<Record<SeriesKey, boolean>>(() => ({
@@ -1237,8 +1242,6 @@ export function BacktestResults({
     const baseResult = strategies[0]?.result;
     const baseShareCount = baseResult?.bhShares ?? null;
     const strategyRows = strategies.map((entry, index) => {
-      const years = Math.max(1 / 12, entry.result.curve.length / 252);
-      const annualized = (1 + entry.result.ccReturn) ** (1 / years) - 1;
       const rollDescription = entry.config.enableRoll
         ? `Δ ≥ ${entry.config.rollDeltaThreshold.toFixed(2)}；${
             entry.config.rollDaysBeforeExpiry === 0
@@ -1268,7 +1271,7 @@ export function BacktestResults({
         shareDelta: formatShareDelta(shareDeltaValue),
         finalValue: typeof finalValue === 'number' ? formatCurrency(finalValue, 0) : '—',
         totalReturn: formatSignedPercent(entry.result.ccReturn),
-        annualized: formatSignedPercent(annualized),
+        annualized: formatSignedPercent(entry.result.ccAnnualizedReturn),
         winRate: `${(entry.result.ccWinRate * 100).toFixed(1)}% (${entry.result.ccSettlementCount})`,
         relativeReturn: formatSignedPercent(entry.result.ccReturn - entry.result.bhReturn),
         rollDescription,
@@ -1276,8 +1279,6 @@ export function BacktestResults({
       };
     });
 
-    const years = baseResult ? Math.max(1 / 12, baseResult.curve.length / 252) : null;
-    const annualized = years != null && baseResult ? (1 + baseResult.bhReturn) ** (1 / years) - 1 : null;
     const buyHoldFinal = baseResult?.curve.at(-1)?.BuyAndHold ?? null;
     const buyHoldShares = baseResult?.bhShares ?? null;
     const buyHoldReturn = baseResult?.bhReturn ?? null;
@@ -1289,7 +1290,7 @@ export function BacktestResults({
       shareDelta: '—',
       finalValue: typeof buyHoldFinal === 'number' ? formatCurrency(buyHoldFinal, 0) : '—',
       totalReturn: buyHoldReturn != null ? formatSignedPercent(buyHoldReturn) : '—',
-      annualized: annualized != null ? formatSignedPercent(annualized) : '—',
+      annualized: baseResult ? formatSignedPercent(baseResult.bhAnnualizedReturn) : '—',
       winRate: '—',
       relativeReturn: '—',
       rollDescription: '—',
@@ -1307,6 +1308,36 @@ export function BacktestResults({
     getStrategyColor,
     strategies,
   ]);
+  const primaryPerformanceRows = useMemo(
+    () => [
+      {
+        label: t('labels.annualized'),
+        bh: formatSignedPercent(result.bhAnnualizedReturn),
+        cc: formatSignedPercent(result.ccAnnualizedReturn),
+      },
+      {
+        label: t('labels.annVol'),
+        bh: formatSignedPercent(result.bhAnnualizedVolatility),
+        cc: formatSignedPercent(result.ccAnnualizedVolatility),
+      },
+      {
+        label: t('labels.sharpe'),
+        bh: formatRatio(result.bhSharpe),
+        cc: formatRatio(result.ccSharpe),
+      },
+      {
+        label: t('labels.maxDrawdown'),
+        bh: formatSignedPercent(result.bhMaxDrawdown),
+        cc: formatSignedPercent(result.ccMaxDrawdown),
+      },
+      {
+        label: t('labels.calmar'),
+        bh: formatRatio(result.bhCalmar),
+        cc: formatRatio(result.ccCalmar),
+      },
+    ],
+    [formatRatio, formatSignedPercent, result],
+  );
 
   const isCoveredCallVisible = seriesVisibility.coveredCall !== false;
 
@@ -1618,6 +1649,32 @@ export function BacktestResults({
                   <td className="px-4 py-3 text-right tabular-nums text-slate-700">{row.relativeReturn}</td>
                   <td className="px-4 py-3 text-slate-700">{row.rollDescription}</td>
                   <td className="px-4 py-3 text-slate-700">{row.options}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className={`${panelClass} p-6 md:p-8`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">{t('table.title')}</h2>
+          <p className="text-xs text-slate-500">{t('table.subtitle')}</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+            <thead className="bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Metric</th>
+                <th className="px-4 py-3 text-right font-semibold">Buy &amp; Hold</th>
+                <th className="px-4 py-3 text-right font-semibold">{formatStrategyLabel(primaryStrategy.config)}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {primaryPerformanceRows.map(row => (
+                <tr key={row.label}>
+                  <td className="px-4 py-3">{row.label}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{row.bh}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{row.cc}</td>
                 </tr>
               ))}
             </tbody>

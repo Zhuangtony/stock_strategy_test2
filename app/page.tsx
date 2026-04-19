@@ -10,6 +10,7 @@ import {
   type StrategyRunResult,
 } from '../components/backtest/types';
 import { runBacktest, type BacktestParams } from '../lib/backtest';
+import { t } from '../lib/i18n';
 
 async function fetchYahooDailyViaApi(ticker: string, start: string, end: string) {
   const u = `/api/yahoo?symbol=${encodeURIComponent(ticker)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
@@ -50,20 +51,20 @@ export default function Page() {
   const trimmedTicker = useMemo(() => ticker.trim().toUpperCase(), [ticker]);
 
   const validationError = useMemo(() => {
-    if (!trimmedTicker) return '請輸入股票代號';
-    if (!start || !end) return '請選擇完整的日期範圍';
-    if (start > end) return '結束日期需晚於開始日期';
-    if (shares <= 0 && initialCapital <= 0) return '請至少設定初始資金或持有股數（兩者其一即可）';
+    if (!trimmedTicker) return t('validation.ticker');
+    if (!start || !end) return t('validation.dates');
+    if (start > end) return t('validation.range');
+    if (shares <= 0 && initialCapital <= 0) return t('validation.capitalOrShares');
     if (!Number.isFinite(riskFreeRate) || riskFreeRate < -0.05 || riskFreeRate > 0.5)
-      return '無風險利率請介於 -5% 至 50% 之間';
+      return t('validation.rRange');
     if (!Number.isFinite(dividendYield) || dividendYield < 0 || dividendYield > 0.4)
-      return '股利殖利率請介於 0% 至 40%';
-    if (!strategyConfigs.length) return '請至少新增一組策略設定';
+      return t('validation.qRange');
+    if (!strategyConfigs.length) return t('validation.needStrategy');
     for (let i = 0; i < strategyConfigs.length; i++) {
       const config = strategyConfigs[i];
       const name = config.label.trim() || `策略 ${i + 1}`;
       if (!Number.isFinite(config.targetDelta) || config.targetDelta < 0.1 || config.targetDelta > 0.6) {
-        return `${name} 的 Delta 需介於 0.10 ~ 0.60`;
+        return t('validation.deltaRange', { name });
       }
       if (config.reinvestPremium) {
         if (
@@ -71,7 +72,7 @@ export default function Page() {
           config.premiumReinvestShareThreshold < 1 ||
           config.premiumReinvestShareThreshold > 1000
         ) {
-          return `${name} 的權利金再投資門檻需介於 1 ~ 1000 股`;
+          return t('validation.reinvestThreshold', { name });
         }
       }
       if (config.enableRoll) {
@@ -80,14 +81,14 @@ export default function Page() {
           config.rollDeltaThreshold < 0.3 ||
           config.rollDeltaThreshold > 0.95
         ) {
-          return `${name} 的 Roll 閾值需介於 0.30 ~ 0.95`;
+          return t('validation.rollDelta', { name });
         }
         if (
           !Number.isFinite(config.rollDaysBeforeExpiry) ||
           config.rollDaysBeforeExpiry < 0 ||
           config.rollDaysBeforeExpiry > 4
         ) {
-          return `${name} 的提前換倉日需介於 0 ~ 4`;
+          return t('validation.rollDays', { name });
         }
       }
     }
@@ -401,7 +402,7 @@ export default function Page() {
                   disabled={runDisabled}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {busy ? '計算中…' : '開始回測'}
+                  {busy ? t('actions.running') : t('actions.run')}
                 </button>
                 {(error || validationError) && (
                   <div className="text-xs text-red-600 md:text-sm">{error ?? validationError}</div>
