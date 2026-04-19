@@ -1,4 +1,4 @@
-﻿import { bsCallDelta, bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
+import { bsCallDelta, bsCallPrice, findStrikeForTargetDelta, estimateHV } from './optionMath';
 
 export type BacktestFrequency = 'weekly' | 'monthly';
 
@@ -8,42 +8,69 @@ export type OhlcRow = {
   adjClose: number;
 };
 
+type PerfMetrics = {
+  annualizedReturn: number;
+  annualizedVolatility: number;
+  sharpe: number;
+  maxDrawdown: number;
+  calmar: number;
+};
 
-function computePerf(series: number[], annualRf: number) {
-  const n = series.length;
-  if (n < 2) {
-    return { total: 0, ann: 0, annVol: 0, sharpe: 0, mdd: 0, calmar: 0 } as const;
+function computePerfMetrics(series: number[], annualRiskFreeRate: number): PerfMetrics {
+  if (series.length < 2) {
+    return {
+      annualizedReturn: 0,
+      annualizedVolatility: 0,
+      sharpe: 0,
+      maxDrawdown: 0,
+      calmar: 0,
+    };
   }
-  const total = series[n - 1] / series[0] - 1;
-  const years = Math.max(1 / 12, n / 252);
-  const ann = Math.pow(1 + total, 1 / years) - 1;
-  const rets: number[] = [];
-  for (let i = 1; i < n; i++) {
+
+  const totalReturn = series[series.length - 1] / series[0] - 1;
+  const years = Math.max(1 / 12, series.length / 252);
+  const annualizedReturn = (1 + totalReturn) ** (1 / years) - 1;
+
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < series.length; i++) {
     const prev = series[i - 1];
     const curr = series[i];
     if (prev > 0 && Number.isFinite(prev) && Number.isFinite(curr)) {
-      rets.push(curr / prev - 1);
+      dailyReturns.push(curr / prev - 1);
     }
   }
-  const mean = rets.reduce((a, b) => a + b, 0) / Math.max(1, rets.length);
-  let varSum = 0;
-  for (const r of rets) varSum += (r - mean) * (r - mean);
-  const dailyVar = rets.length > 1 ? varSum / (rets.length - 1) : 0;
-  const annVol = Math.sqrt(Math.max(0, dailyVar)) * Math.sqrt(252);
-  const sharpe = annVol > 0 ? (ann - annualRf) / annVol : 0;
+
+  const mean = dailyReturns.length
+    ? dailyReturns.reduce((acc, value) => acc + value, 0) / dailyReturns.length
+    : 0;
+  const variance =
+    dailyReturns.length > 1
+      ? dailyReturns.reduce((acc, value) => acc + (value - mean) ** 2, 0) / (dailyReturns.length - 1)
+      : 0;
+  const annualizedVolatility = Math.sqrt(Math.max(0, variance)) * Math.sqrt(252);
+  const sharpe = annualizedVolatility > 0 ? (annualizedReturn - annualRiskFreeRate) / annualizedVolatility : 0;
+
   let peak = series[0];
-  let mdd = 0;
-  for (let i = 0; i < series.length; i++) {
-    const v = series[i];
-    if (v > peak) peak = v;
+  let maxDrawdown = 0;
+  for (const value of series) {
+    if (value > peak) peak = value;
     if (peak > 0) {
-      const dd = v / peak - 1;
-      if (dd < mdd) mdd = dd;
+      const drawdown = value / peak - 1;
+      if (drawdown < maxDrawdown) maxDrawdown = drawdown;
     }
   }
-  const calmar = mdd !== 0 ? ann / Math.abs(mdd) : 0;
-  return { total, ann, annVol, sharpe, mdd, calmar } as const;
-}export interface BacktestParams {
+  const calmar = maxDrawdown < 0 ? annualizedReturn / Math.abs(maxDrawdown) : 0;
+
+  return {
+    annualizedReturn,
+    annualizedVolatility,
+    sharpe,
+    maxDrawdown,
+    calmar,
+  };
+}
+
+export interface BacktestParams {
   initialCapital: number;
   shares: number;
   r: number;
@@ -96,7 +123,31 @@ export interface BacktestCurvePoint {
   };
 }
 
-export interface RunBacktestResult {  bhAnnualizedReturn: number;  ccAnnualizedReturn: number;  bhAnnVol: number;  ccAnnVol: number;  bhSharpe: number;  ccSharpe: number;  bhMaxDrawdown: number;  ccMaxDrawdown: number;  bhCalmar: number;  ccCalmar: number;  sampleDays: number; }
+export interface RunBacktestResult {
+  curve: BacktestCurvePoint[];
+  bhReturn: number;
+  ccReturn: number;
+  bhAnnualizedReturn: number;
+  ccAnnualizedReturn: number;
+  bhAnnualizedVolatility: number;
+  ccAnnualizedVolatility: number;
+  bhSharpe: number;
+  ccSharpe: number;
+  bhMaxDrawdown: number;
+  ccMaxDrawdown: number;
+  bhCalmar: number;
+  ccCalmar: number;
+  hv: number;
+  ivUsed: number;
+  bhShares: number;
+  ccShares: number;
+  settlements: SettlementEvent[];
+  rollEvents: SettlementEvent[];
+  ccWinRate: number;
+  ccSettlementCount: number;
+  effectiveTargetDelta: number;
+  rollDeltaTrigger: number;
+}
 
 type ActiveCallPosition = {
   strike: number;
@@ -477,14 +528,25 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
   }
   const bhReturn = (bh_value.at(-1)! / bh_value[0] - 1);
   const ccReturn = (cc_value.at(-1)! / cc_value[0] - 1);
+  const bhPerf = computePerfMetrics(bh_value, params.r);
+  const ccPerf = computePerfMetrics(cc_value, params.r);
   const settlementTrades = settlements.filter(s => s.qty > 0);
   const winningTrades = settlementTrades.filter(s => s.pnl > 0).length;
   const ccWinRate = settlementTrades.length > 0 ? winningTrades / settlementTrades.length : 0;
-  const perfBH = computePerf(bh_value, params.r);
-  const perfCC = computePerf(cc_value, params.r);  return {
+  return {
     curve: out,
     bhReturn,
     ccReturn,
+    bhAnnualizedReturn: bhPerf.annualizedReturn,
+    ccAnnualizedReturn: ccPerf.annualizedReturn,
+    bhAnnualizedVolatility: bhPerf.annualizedVolatility,
+    ccAnnualizedVolatility: ccPerf.annualizedVolatility,
+    bhSharpe: bhPerf.sharpe,
+    ccSharpe: ccPerf.sharpe,
+    bhMaxDrawdown: bhPerf.maxDrawdown,
+    ccMaxDrawdown: ccPerf.maxDrawdown,
+    bhCalmar: bhPerf.calmar,
+    ccCalmar: ccPerf.calmar,
     hv,
     ivUsed: iv,
     bhShares: params.shares,
@@ -495,17 +557,5 @@ export function runBacktest(ohlc: OhlcRow[], params: BacktestParams): RunBacktes
     ccSettlementCount: settlementTrades.length,
     effectiveTargetDelta: strikeTargetDelta,
     rollDeltaTrigger,
-    // new performance fields
-    bhAnnualizedReturn: perfBH.ann,
-    ccAnnualizedReturn: perfCC.ann,
-    bhAnnVol: perfBH.annVol,
-    ccAnnVol: perfCC.annVol,
-    bhSharpe: perfBH.sharpe,
-    ccSharpe: perfCC.sharpe,
-    bhMaxDrawdown: perfBH.mdd,
-    ccMaxDrawdown: perfCC.mdd,
-    bhCalmar: perfBH.calmar,
-    ccCalmar: perfCC.calmar,
-    sampleDays: dates.length,
   };
 }
